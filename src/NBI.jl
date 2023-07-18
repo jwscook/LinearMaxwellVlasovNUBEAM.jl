@@ -209,7 +209,7 @@ function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity
   M = zeros(Float64, (size(nbidata)..., Threads.nthreads()))
   M0 = zeros(Float64, size(nbidata))
   function objectivefit(x)
-    @batch per=thread for k in 1:nringbeams
+    @threads for k in 1:nringbeams
       s = speciesscalar(k, x)
       ρ = density(s, mass)
       Mlocal = @view M[:, :, Threads.threadid()]
