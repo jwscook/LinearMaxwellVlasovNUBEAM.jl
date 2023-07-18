@@ -8,7 +8,7 @@ argsettings = ArgParseSettings()
 @add_arg_table! argsettings begin
     "--nubeamfilename", "--f"
         help = "The hdf5 filename of nubeam data"
-        argtype = String
+        arg_type = String
         default = "fnb_3235.h5"
     "--magneticfield", "--B0"
         help = "The magnetic field density, B0 [T]"
