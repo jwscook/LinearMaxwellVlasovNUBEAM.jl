@@ -216,19 +216,19 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
     FBeam(vinj * vthfracinj, vinj * peakpitch),
     FRing(vinj * vthfracinj, vinj * sqrt(1-peakpitch^2)))
 
-  pth = 0.1
-  pinj = 0.7 # TODO make this configurable
-  vcliff = vinj / 10
-  pinj = 0.7
-  function ftanh(vz::T, v⊥::U) where {T, U}
-    v = sqrt(vz^2 + v⊥^2)
-    p = vz / v
-    return v * (1 - tanh((v - vinj) / vcliff)) * exp(-((p - pinj) / pth)^2)
-  end
-  ftanh(vz⊥) = nbi.interp_vz⊥(vz⊥[1], vz⊥[2])
-
-  vzinj = vinj * pinj
-  v⊥inj = vinj * sqrt(1 - pinj^2)
+#  pth = 0.1
+#  pinj = 0.7 # TODO make this configurable
+#  vcliff = vinj / 10
+#  pinj = 0.7
+#  function ftanh(vz::T, v⊥::U) where {T, U}
+#    v = sqrt(vz^2 + v⊥^2)
+#    p = vz / v
+#    return v * (1 - tanh((v - vinj) / vcliff)) * exp(-((p - pinj) / pth)^2)
+#  end
+#  ftanh(vz⊥) = nbi.interp_vz⊥(vz⊥[1], vz⊥[2])
+#
+#  vzinj = vinj * pinj
+#  v⊥inj = vinj * sqrt(1 - pinj^2)
 #  ftanhvz⊥ = FCoupledVelocityNumerical(ftanh, (vzinj, v⊥inj), 0.0, vinj*1.1, autonormalise=true)
 #  nbi_tanh = CoupledVelocitySpecies(Πn, Ωn, ftanhvz⊥)
 
