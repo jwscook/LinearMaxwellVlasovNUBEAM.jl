@@ -25,7 +25,6 @@ const TSpecies = SeparableVelocitySpecies{Float64, Float64, FBeam{Float64, Float
   edata::Vector{Float64}
   fmax::Float64
 end
-
 function NBIData(fname, massnumber=2;
     energysamplestep=1,
     pitchsamplestep=1,
@@ -140,31 +139,35 @@ end
 (nbi::NBIInterpVelocitySpace)(vz⊥) = nbi.interp_vz⊥(vz⊥[1], vz⊥[2])
 
 
-cachehash_ic(nbidata, nringbeams) = hash(nringbeams, hash(nbidata))
-function cacheic_fname(nbidata, nringbeams)
-  return "BlackBoxOptim_xbest_$(cachehash_ic(nbidata, nringbeams)).jlso"
+function cacheic_fname(tuple)
+    return "BlackBoxOptim_cache_$(hash(tuple)).jlso"
 end
-function default_initialconditions_generator(nbidata::NBIData, nringbeams::Int)
-  fname = cacheic_fname(nbidata, nringbeams)
-  ic = if isfile(fname)
-    @info "Using $(fname) for initial condition"
+function optctrl_generator(objective::F, nbidata::NBIData, nringbeams::Int,
+    bboptimizemethod, targetfitness, traceinterval) where F
+  fname = cacheic_fname((nbidata, nringbeams, bboptimizemethod, targetfitness, traceinterval))
+  optctrl = if isfile(fname)
+    @info "Using $(fname) for optimisation control"
     loaded = JLSO.load(fname)
-    loaded[:xbest]
+    loaded[:optctrl]
   else
-    @info "Cachfile $fname not found"
-    rand(nringbeams * ncomponents_per_ringbeam)
+    @info "Cachfile $fname not found, so generating a new optimisation control"
+    bbsetup(objective;
+      SearchRange = (0.0, 1.0),
+      NumDimensions = ncomponents_per_ringbeam * nringbeams,
+      Method = bboptimizemethod,
+      TargetFitness = targetfitness,
+      TraceInterval = traceinterval)
   end
-  return ic
+  return optctrl
 end
 
-function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity,
-    initialconditions_generator::F=default_initialconditions_generator;
+function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity;
     nringbeams=100, bboptimizemethod=:adaptive_de_rand_1_bin,
-    timelimithours=12, targetfitness=0.01, prenormop::T=identity,
-    traceinterval=600.0)::Vector{TSpecies} where {F, T}
+    timelimithours=12, targetfitness=0.01, traceinterval=600.0,
+    performoptimisation=true)::Vector{TSpecies}
 
-  cachehash = foldr(hash, (Π, Ω, numberdensity, nringbeams, bboptimizemethod,
-     timelimithours, targetfitness); init=hash(nbidata))
+  cachehash = foldr(hash, (Π, Ω, numberdensity, nringbeams, bboptimizemethod);
+                    init=hash(nbidata))
 
   mass = nbidata.massnumber * 1836 * mₑ
   v²perkeV = 1000q₀ * 2 / mass
@@ -209,7 +212,7 @@ function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity
   M = zeros(Float64, (size(nbidata)..., Threads.nthreads()))
   M0 = zeros(Float64, size(nbidata))
   function objectivefit(x)
-    @threads for k in 1:nringbeams
+    @batch per=thread for k in 1:nringbeams
       s = speciesscalar(k, x)
       ρ = density(s, mass)
       Mlocal = @view M[:, :, Threads.threadid()]
@@ -249,7 +252,7 @@ function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity
     return A
   end
 
-  fnorm = norm(prenormop.(nbidata.fdata))
+  fnorm = norm(nbidata.fdata)
 
   function objective(x)
     A = objectivefit(x)
@@ -257,28 +260,32 @@ function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity
     maxA = maximum(A)
     @turbo for i in eachindex(A, nbidata.fdata)
       A[i] /= maxA
-      A[i] = prenormop(A[i])
-      A[i] -= prenormop(nbidata.fdata[i])
+      A[i] -= nbidata.fdata[i]
     end
     return norm(A) / fnorm
   end
 
-  ic = initialconditions_generator(nbidata, nringbeams)
+  optctrl = optctrl_generator(objective, nbidata, nringbeams, bboptimizemethod, targetfitness,
+                             traceinterval)
 
-  t = @elapsed res = bboptimize(objective, ic;
-    SearchRange = (0.0, 1.0),
-    NumDimensions = ncomponents_per_ringbeam * nringbeams,
-    Method = bboptimizemethod,
-    TraceInterval = traceinterval,
-    TraceMode = :compact,
-    TargetFitness = targetfitness,
-    MaxTime = 3600 * timelimithours,
-    MaxSteps = 1_000_000,
-    MaxFuncEvals = timelimithours == 0 ? 0 : Int(maxintfloat()))
+  ix = rand(ncomponents_per_ringbeam * nringbeams)
+
+  t = @elapsed res = if performoptimisation
+    bboptimize(optctrl;
+      TraceMode = :compact,
+      MaxTime = 3600 * timelimithours,
+      MaxSteps = 1_000_000,
+      MaxFuncEvals = timelimithours == 0 ? 0 : Int(maxintfloat()))
+  else
+    loaded = JLSO.load("BlackBoxOptim_results_$(cachehash).jlso")
+    loaded[:results]
+  end
+
   xbest = best_candidate(res)
   fitness = best_fitness(res)
+  @info "Fitness = $fitness"
 
-  @info "Fitness achieved is $fitness in $(t / 3600) hours."
+  performoptimisation && @info "Fitness achieved is $fitness in $(t / 3600) hours."
   dfs = speciesvector(best_candidate(res))
 
   nprenorm = sum(density(i, mass) for i in dfs)
@@ -287,7 +294,7 @@ function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity
   @assert nnbi ≈ numberdensity
 
   JLSO.save("BlackBoxOptim_results_$(cachehash).jlso",
-    :xbest => xbest, :nbi_species => nbi_species, :fitness => fitness)
+    :optctrl => optctrl, :results => res, :xbest => xbest, :nbi_species => nbi_species, :fitness => fitness)
 
   JLSO.save("BlackBoxOptim_nbi_species_$(cachehash).jlso",
     :nbi_species => nbi_species,
@@ -302,7 +309,8 @@ function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity
     :scaledfit => deepcopy(objectivefit(xbest)),
     :fit => rescalebyjacobians!(deepcopy(objectivefit(xbest))))
 
-  JLSO.save(cacheic_fname(nbidata, nringbeams), :xbest => xbest)
+  JLSO.save(cacheic_fname((nbidata, nringbeams, bboptimizemethod, targetfitness, traceinterval)),
+            :optctrl => optctrl, :xbest => xbest)
 
   return nbi_species
 end

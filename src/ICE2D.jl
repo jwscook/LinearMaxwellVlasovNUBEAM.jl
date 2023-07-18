@@ -26,15 +26,15 @@ argsettings = ArgParseSettings()
         help = "The electron temperature in eV"
         arg_type = Float64
         default = 1.73e3
-    "--backgroudhydrogentemperatureev", "--th"
-        help = "The background hydrogen temperature in eV"
+    "--backgroudprotontemperatureev", "--th"
+        help = "The background proton temperature in eV"
         arg_type = Float64
         default = 1.0e3
     "--backgrouddeuterontemperatureev", "--td"
         help = "The background dueteron temperature in eV"
         arg_type = Float64
         default = 1.0e3
-    "--ratiothermalhydrogentoelectrons", "--np_nd"
+    "--ratiothermalprotontoelectrons", "--np_nd"
         help = "The ratio of number densities of thermal H to electrons, n_p / n_e"
         arg_type = Float64
         default = 0.0
@@ -58,10 +58,6 @@ argsettings = ArgParseSettings()
         help = "Use a ring-beam fit to the data"
         arg_type = Bool
         default = true
-    "--prenormoppower", "-p"
-        help = "The power to raise data by before normalisation in fitting procedure"
-        arg_type = Int
-        default = 1
     "--injenergymultiplier"
         help = "Factor to multiply injection energy by"
         arg_type = Float64
@@ -76,9 +72,9 @@ include("NBI.jl")
 using .NBI
 
 const parsedargs = parse_args(ARGS, argsettings)
+@show parsedargs
 
 const nringbeams = parsedargs["nringbeams"]
-const pow = parsedargs["prenormoppower"]
 const injenergymultiplier = parsedargs["injenergymultiplier"]
 const vthfracinj = parsedargs["vthfracinj"]
 
@@ -97,27 +93,20 @@ const nbidata = NBI.NBIData(parsedargs["nubeamfilename"], nbimassinprotons;
   energykevlowcutoff=0.0, energykevhighcutoff=Inf,
   padpitch_neumann_bc=true)
 
-#const nbidata0 = NBI.NBIData(parsedargs["nubeamfilename"], nbimassinprotons;
-#  padpitch_neumann_bc=false)
-# this "integral" doesn't have the right jacobian
-#const ξfraction = sum(nbidata.fdata) / sum(nbidata0.fdata)
-#@info "ξ fraction = $ξfraction"
-#
-
 const timelimithours = parsedargs["timelimithours"]
 const niters = parsedargs["niters"]
 
 const teev = parsedargs["electrontemperatureev"]
-const thev = parsedargs["backgroudhydrogentemperatureev"]
+const tpev = parsedargs["backgroudprotontemperatureev"]
 const tdev = parsedargs["backgrouddeuterontemperatureev"]
-const nd_ne = parsedargs["ratiothermalhydrogentoelectrons"]
+const nd_ne = parsedargs["ratiothermalprotontoelectrons"]
 
 const ξ = parsedargs["nbidensityfraction"]# * ξfraction
 const mn = md = nbimassinprotons * 1836 * LinearMaxwellVlasov.mₑ
 const nn = n0 * ξ # number density of nbi
 const nd = nd_ne * n0 # number density of background thermal D
-const nh = n0 - nn - nd # number density of background thermal H
-@assert n0 ≈ nn + nd + nh
+const np = n0 - nn - nd # number density of background thermal H
+@assert n0 ≈ nn + nd + np
 
 const Ωn = cyclotronfrequency(B0, mn, 1)
 const Πn = plasmafrequency(nn, mn, 1)
@@ -128,22 +117,25 @@ const Πn = plasmafrequency(nn, mn, 1)
 #@info "Creating nbi coupled species"
 #const _nbi_coupled = NBI.couplednbispecies(nbi_interp, Πn, Ωn)
 
+
 @info "Calculating nbi fit species with $nringbeams sub-populations"
 for _ in 1:niters # iterate and saves result after each
   NBI.differentialevolutionfitspecies(nbidata, Πn, Ωn, nn,
-    nringbeams=nringbeams, timelimithours=timelimithours, targetfitness=0.01, prenormop=x->x^pow,
+    nringbeams=nringbeams, timelimithours=timelimithours, targetfitness=0.01,
     )::Vector{NBI.TSpecies}
 end
 # read it from a file as a const
 const _nbi_ringbeamsfit = NBI.differentialevolutionfitspecies(nbidata, Πn, Ωn, nn,
-    nringbeams=nringbeams, timelimithours=0, targetfitness=0.01, prenormop=x->x^pow,
-    traceinterval=200)::Vector{NBI.TSpecies}
+    nringbeams=nringbeams, timelimithours=timelimithours, targetfitness=0.01,
+    performoptimisation=false)::Vector{NBI.TSpecies}
+
+@info "nbi_ringbeamsfit has been obtained"
 
 const peakenergykev = NBI.peakenergy(nbidata)
 const pitchofmax = NBI.peakpitch(nbidata)
 
-const nprocsadded = 2#div(Sys.CPU_THREADS, 2)
-addprocs(nprocsadded, exeflags="--project")
+const nprocsadded = div(Sys.CPU_THREADS, 2)
+addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
 @everywhere using ProgressMeter # for some reason must be up here on its own
 @everywhere using StaticArrays
@@ -174,7 +166,7 @@ addprocs(nprocsadded, exeflags="--project")
   Πn = Float64(@fetchfrom 1 Πn)
   Ωn = Float64(@fetchfrom 1 Ωn)
   teev = Float64(@fetchfrom 1 teev)
-  thev = Float64(@fetchfrom 1 thev)
+  tpev = Float64(@fetchfrom 1 tpev)
   tdev = Float64(@fetchfrom 1 tdev)
 
   injectionenergykev = Float64(@fetchfrom 1 peakenergykev)
@@ -184,25 +176,25 @@ addprocs(nprocsadded, exeflags="--project")
   nbi_ringbeamsfit = Vector{NBI.TSpecies}(@fetchfrom 1 _nbi_ringbeamsfit)
 
   mₑ = LinearMaxwellVlasov.mₑ
-  mh = 1836*mₑ
-  md = 2*mh
+  mp = 1836*mₑ
+  md = 2*mp
 
   name_extension = String(@fetchfrom 1 name_extension)
 
-  @assert n0 ≈ nn + nd
-  Va = sqrt(B0^2/LinearMaxwellVlasov.μ₀/nd/md)
+  @assert n0 ≈ nn + nd + np
+  Va = sqrt(B0^2/LinearMaxwellVlasov.μ₀/(nd * md + np * mp + nn * mn))
 
   Ωe = cyclotronfrequency(B0, mₑ, -1)
   Ωd = cyclotronfrequency(B0, md, 1)
-  Ωn = cyclotronfrequency(B0, mn, 1)
-  Ωn = cyclotronfrequency(B0, mh, 1)
+  #Ωn = cyclotronfrequency(B0, mn, 1)
+  Ωp = cyclotronfrequency(B0, mp, 1)
   Πe = plasmafrequency(n0, mₑ, -1)
   Πd = plasmafrequency(nd, md, 1)
   Πn = plasmafrequency(nn, mn, 1)
-  Πh = plasmafrequency(nh, mh, 1)
+  Πh = plasmafrequency(np, mp, 1)
   vthe = thermalspeed(teev, mₑ)
   vthd = thermalspeed(tdev, md)
-  vthh = thermalspeed(thev, mh)
+  vthp = thermalspeed(tpev, mp)
 
   q₀ = LinearMaxwellVlasov.q₀
 
@@ -217,7 +209,7 @@ addprocs(nprocsadded, exeflags="--project")
   deuteron_warm = WarmSpecies(Πd, Ωd, vthd)
   deuteron_maxw = MaxwellianSpecies(Πd, Ωd, vthd, vthd)
 
-  hydrogen_maxw = MaxwellianSpecies(Πh, Ωh, vthh, vthh)
+  proton_maxw = MaxwellianSpecies(Πh, Ωp, vthp, vthp)
 
   nbi_cold = ColdSpecies(Πn, Ωn)
   nbi_ringbeam = SeparableVelocitySpecies(Πn, Ωn,
@@ -245,7 +237,7 @@ addprocs(nprocsadded, exeflags="--project")
 #    FRing(vinj * vthfracinj, vinj * sqrt(1-peakpitch^2)))
   commonspecies = [electron_maxw]
   !iszero(Πd) && push!(commonspecies, deuteron_maxw)
-  !iszero(Πh) && push!(commonspecies, hydrogen_maxw)
+  !iszero(Πh) && push!(commonspecies, proton_maxw)
 
   Smms = Plasma([commonspecies..., nbi_ringbeamsfit...])
   Smmr = Plasma([commonspecies..., nbi_ringbeam])
@@ -330,7 +322,6 @@ addprocs(nprocsadded, exeflags="--project")
       objective! = @closure (C, x) -> f2Dω!(C, x, plasma, cache)
       innersolutions = Vector()
       for (ikz, kz) ∈ enumerate(kzs)
-        @show ikz
         K = Wavenumber(parallel=kz, perpendicular=k⊥)
         output = solve_given_ks(K, objective!)
         isnothing(output) && continue
@@ -524,7 +515,7 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
 
   imaglolim = 1e-5
 
-  mask = shuffle(findall(@. (imag(ωs) > imaglolim) & (real(ωs) <= 12)))
+  mask = shuffle(findall(@. (imag(ωs) > imaglolim)))
   @warn "Scatter plots rendering with $(length(mask)) points."
   if sum(mask) > 0
     perm = sortperm(imag.(ωs[mask]))
