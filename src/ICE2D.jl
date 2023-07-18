@@ -92,12 +92,12 @@ const n0 = parsedargs["electrondensity"]
 const B0 = parsedargs["magneticfield"]
 
 @info "Reading nbi data"
-const nbidata = NBI.NBIData(parsedargs["nubeamfilenam"], nbimassinprotons;
+const nbidata = NBI.NBIData(parsedargs["nubeamfilename"], nbimassinprotons;
   pitchlowcutoff=-1.0, pitchhighcutoff=1.0,
   energykevlowcutoff=0.0, energykevhighcutoff=Inf,
   padpitch_neumann_bc=true)
 
-#const nbidata0 = NBI.NBIData(parsedargs["nubeamfilenam"], nbimassinprotons;
+#const nbidata0 = NBI.NBIData(parsedargs["nubeamfilename"], nbimassinprotons;
 #  padpitch_neumann_bc=false)
 # this "integral" doesn't have the right jacobian
 #const ξfraction = sum(nbidata.fdata) / sum(nbidata0.fdata)
