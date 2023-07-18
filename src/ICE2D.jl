@@ -128,7 +128,6 @@ const Πn = plasmafrequency(nn, mn, 1)
 #@info "Creating nbi coupled species"
 #const _nbi_coupled = NBI.couplednbispecies(nbi_interp, Πn, Ωn)
 
-
 @info "Calculating nbi fit species with $nringbeams sub-populations"
 for _ in 1:niters # iterate and saves result after each
   NBI.differentialevolutionfitspecies(nbidata, Πn, Ωn, nn,
