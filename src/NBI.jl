@@ -25,6 +25,30 @@ const TSpecies = SeparableVelocitySpecies{Float64, Float64, FBeam{Float64, Float
   edata::Vector{Float64}
   fmax::Float64
 end
+"""
+    NBIData(fname,massnumber=2;energysamplestep=1,pitchsamplestep=1,energykevlowcutoff=0.0,energykevhighcutoff=Inf,pitchlowcutoff=-Inf,pitchhighcutoff=Inf,padpitch_neumann_bc=false,nzerocolpad=1)
+
+description
+
+...
+# Arguments
+- `fname`: the filename of the NUBEAM data
+- `massnumber=2`:  mass of the ions, in units of proton masses
+Optional args:
+- `energysamplestep=1`: sample the data every nth point in the energy direction
+- `pitchsamplestep=1`:  sample the data every nth point in the pitch direction
+- `energykevlowcutoff=0.0`: cutoff the data below this energy
+- `energykevhighcutoff=Inf`:  cutoff the data above this energy
+- `pitchlowcutoff=-Inf`: cutoff the data below this pitch
+- `pitchhighcutoff=Inf`: cutoff the data above this pitch
+- `padpitch_neumann_bc=false`: copy the data out to pitches of -1, 1
+- `nzerocolpad=1`: keep this many columns of zeros
+...
+
+# Example
+```julia
+```
+"""
 function NBIData(fname, massnumber=2;
     energysamplestep=1,
     pitchsamplestep=1,
@@ -139,9 +163,43 @@ end
 (nbi::NBIInterpVelocitySpace)(vz⊥) = nbi.interp_vz⊥(vz⊥[1], vz⊥[2])
 
 
+"""
+    cacheic_fname(tuple)
+
+Consistently generate a hash from the optimisation arguments to save and load files from.
+
+...
+# Arguments
+- `tuple`: a tuple of arguments that uniquely (hopefully) determine the optimisation procedure
+...
+
+# Example
+```julia
+```
+"""
 function cacheic_fname(tuple)
-    return "BlackBoxOptim_cache_$(hash(tuple)).jlso"
+  return "BlackBoxOptim_cache_$(hash(tuple)).jlso"
 end
+
+"""
+    optctrl_generator(objective::F,nbidata::NBIData,nringbeams::Int,bboptimizemethod,targetfitness,traceinterval)whereF
+
+This creates an optimisation control struct for internal use by BlackBoxOptim
+
+...
+# Arguments
+- `objective::F`:  the objective function
+- `nbidata::NBIData`: the data to fit turbo
+- `nringbeams::Int`:  the number of ring-beams
+- `bboptimizemethod`: the method used internally by BlackBoxOptim
+- `targetfitness`: the target fitness for the fitting to achieve
+- `traceinterval`: the interval that BlackBoxOptim prints info to screen (yes, this affects the optimisation procedure!!)
+...
+
+# Example
+```julia
+```
+"""
 function optctrl_generator(objective::F, nbidata::NBIData, nringbeams::Int,
     bboptimizemethod, targetfitness, traceinterval) where F
   fname = cacheic_fname((nbidata, nringbeams, bboptimizemethod, targetfitness, traceinterval))
@@ -161,6 +219,30 @@ function optctrl_generator(objective::F, nbidata::NBIData, nringbeams::Int,
   return optctrl
 end
 
+"""
+    differentialevolutionfitspecies(nbidata::NBIData,Π,Ω,numberdensity;nringbeams=100,bboptimizemethod=:adaptive_de_rand_1_bin,timelimithours=12,targetfitness=0.01,traceinterval=600.0,performoptimisation=true)::Vector{TSpecies}
+
+Return a vector of RingBeam Species that best fit the data given the parameters
+
+...
+# Arguments
+- `nbidata::NBIData`:
+- `Π`: the plasma frequency of the whole energetic ion population
+- `Ω`: the cyclotron frequency
+- `numberdensity`: total number density of energetic ion population
+Optional args:
+- `nringbeams=100`: number of ring beams
+- `bboptimizemethod=:adaptive_de_rand_1_bin`: used internally by BlackBoxOptim
+- `timelimithours=12`:
+- `targetfitness=0.01`:
+- `traceinterval=600.0`: in seconds
+- `performoptimisation=true::Vector{TSpecies}`: when false, this reads data from file and returns it
+...
+
+# Example
+```julia
+```
+"""
 function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity;
     nringbeams=100, bboptimizemethod=:adaptive_de_rand_1_bin,
     timelimithours=12, targetfitness=0.01, traceinterval=600.0,
