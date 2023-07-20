@@ -2,7 +2,7 @@
 
 julia_version = "1.8.5"
 manifest_format = "2.0"
-project_hash = "588f226f21a1a030b8aa359aea676e5c4f5981bc"
+project_hash = "ff21c89db90e051d02da31e27fa402040b3b685f"
 
 [[deps.ADTypes]]
 git-tree-sha1 = "e58c18d2312749847a74f5be80bb0fa53da102bd"
@@ -1282,6 +1282,12 @@ git-tree-sha1 = "6ed52fdd3382cf21947b15e8870ac0ddbff736da"
 uuid = "f50d1b31-88e8-58de-be2c-1cc44531875f"
 version = "0.4.0+0"
 
+[[deps.Roots]]
+deps = ["ChainRulesCore", "CommonSolve", "Printf", "Setfield"]
+git-tree-sha1 = "de432823e8aab4dd1a985be4be768f95acf152d4"
+uuid = "f2b01f46-fcfa-551c-844a-d8ac1e96c665"
+version = "2.0.17"
+
 [[deps.RuntimeGeneratedFunctions]]
 deps = ["ExprTools", "SHA", "Serialization"]
 git-tree-sha1 = "0b9b18d6236e9ab2b092defaacdffd929d572642"
@@ -1630,6 +1636,14 @@ deps = ["Colors", "Dates", "Observables", "OrderedCollections"]
 git-tree-sha1 = "fcdae142c1cfc7d89de2d11e08721d0f2f86c98a"
 uuid = "cc8bc4a8-27d6-5769-a93b-9d913e69aa62"
 version = "0.6.6"
+
+[[deps.WindingNelderMead]]
+deps = ["LinearAlgebra"]
+git-tree-sha1 = "52fdc62af61f0531e24ef5d2c0b56d5fb5e22b5e"
+repo-rev = "main"
+repo-url = "git@github.com:jwscook/WindingNelderMead.jl.git"
+uuid = "90331ebb-4c50-4cb3-baac-4577cf398cd8"
+version = "0.1.2"
 
 [[deps.WoodburyMatrices]]
 deps = ["LinearAlgebra", "SparseArrays"]

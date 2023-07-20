@@ -54,10 +54,6 @@ argsettings = ArgParseSettings()
         help = "The number of restarted fit calculations"
         arg_type = Int
         default = 0
-    "--usefit", "-u"
-        help = "Use a ring-beam fit to the data"
-        arg_type = Bool
-        default = true
     "--injenergymultiplier"
         help = "Factor to multiply injection energy by"
         arg_type = Float64
@@ -149,6 +145,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 @everywhere using JLD2
 @everywhere using Serialization
 @everywhere using InteractiveUtils
+@everywhere using Roots
 @everywhere include("NBI.jl")
 @everywhere using .NBI # have to re-add this for some reason?
 @everywhere begin
@@ -240,8 +237,9 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   !iszero(Πh) && push!(commonspecies, proton_maxw)
 
   Smms = Plasma([commonspecies..., nbi_ringbeamsfit...])
-  Smmr = Plasma([commonspecies..., nbi_ringbeam])
-# Smmc = Plasma([commonspecies..., nbi_coupled])
+  Smmc = Plasma([commonspecies..., nbi_cold])
+# Smmr = Plasma([commonspecies..., nbi_ringbeam])
+# Smmo = Plasma([commonspecies..., nbi_coupled])
 # Smmt = Plasma([commonspecies..., nbi_tanh])
 
   w0 = abs(Ωd)
@@ -258,8 +256,22 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   options = Options(memoiseparallel=false, memoiseperpendicular=true,
     quadrature_rtol=1e-10, summation_rtol=1e-8)
 
-  function solve_given_ks(K, objective!)
-    ω0 = fastzerobetamagnetoacousticfrequency(Va, K, Ωd)
+  function solve_given_ks(K, objective!, coldobjective!)
+    ωfA0 = fastzerobetamagnetoacousticfrequency(Va, K, Ωd)
+    lb_fA, ub_fA = [ωfA0 / 4], [ωfA0 * 4]
+
+    config = Configuration(K, options)
+    function boundedunitcoldobjective!(x::T) where {T}
+      output = real(coldobjective!(config, scaleup(lb_fA, ub_fA, x)))
+      return maybeaddinf(output, !isinunitbounds(x))
+    end
+    ω0 = try
+      ic = normalise(lb_fA, ub_fA, ωfA0)
+      unitresult = Roots.find_zero(x->boundedunitcoldobjective!((@SArray [x])), ic, atol=1e-1)
+      scaleup(lb_fA, ub_f, unitresult)
+    catch
+      ωfA0
+    end
 
     lb, ub = bounds(ω0)
 
@@ -309,8 +321,13 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
     config.frequency = Complex(x[1], x[2])
     return det(tensor(plasma, config, cache))
   end
+  function f1Dω!(config::Configuration, x, plasma, cache)
+    config.frequency = Complex(x[1], 0.0)
+    return det(tensor(coldplasma, config, cache))
+  end
 
-  function findsolutions(plasma)
+
+  function findsolutions(plasma, coldplasma)
     ngridpoints = 2^9
     kzs = range(-1.0, stop=1.0, length=ngridpoints) * k0
     k⊥s = range(0.0, stop=5.0, length=ngridpoints) * k0
@@ -320,10 +337,11 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
     solutions = @sync @showprogress @distributed (vcat) for k⊥ ∈ k⊥s
       cache = Cache()
       objective! = @closure (C, x) -> f2Dω!(C, x, plasma, cache)
+      coldobjective! = @closure (C, x) -> f1Dω!(C, x, coldplasma, Cache())
       innersolutions = Vector()
       for (ikz, kz) ∈ enumerate(kzs)
         K = Wavenumber(parallel=kz, perpendicular=k⊥)
-        output = solve_given_ks(K, objective!)
+        output = solve_given_ks(K, objective!, coldobjective!)
         isnothing(output) && continue
         push!(innersolutions, output)
       end
@@ -570,8 +588,7 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
 end
 
 if true
-  speciesvector = parsedargs["usefit"] ? Smms : Smmr
-  @time plasmasols = findsolutions(speciesvector)
+  @time plasmasols = findsolutions(Smms, Smmc)
   plasmasols = selectlargeestgrowthrate(plasmasols)
   @show length(plasmasols)
   @time plotit(plasmasols)
