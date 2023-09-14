@@ -26,11 +26,11 @@ argsettings = ArgParseSettings()
         help = "The electron temperature in eV"
         arg_type = Float64
         default = 1.73e3
-    "--backgroudprotontemperatureev", "--th"
+    "--backgroundprotontemperatureev", "--th"
         help = "The background proton temperature in eV"
         arg_type = Float64
         default = 1.0e3
-    "--backgrouddeuterontemperatureev", "--td"
+    "--backgrounddeuterontemperatureev", "--td"
         help = "The background dueteron temperature in eV"
         arg_type = Float64
         default = 1.0e3
@@ -93,8 +93,8 @@ const timelimithours = parsedargs["timelimithours"]
 const niters = parsedargs["niters"]
 
 const teev = parsedargs["electrontemperatureev"]
-const tpev = parsedargs["backgroudprotontemperatureev"]
-const tdev = parsedargs["backgrouddeuterontemperatureev"]
+const tpev = parsedargs["backgroundprotontemperatureev"]
+const tdev = parsedargs["backgrounddeuterontemperatureev"]
 const nd_ne = parsedargs["ratiothermalprotontoelectrons"]
 
 const ξ = parsedargs["nbidensityfraction"]# * ξfraction
