@@ -615,11 +615,12 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
      fHz = real(ω) * w0 / 2π # real frequency in Hz
      index = findlast(x->fHz > x, freq_bins_Hz)
      (1 <= index <= syntheticspectrumnbins) || continue
-     syntheticspectrum[index] = max(syntheticspectrum[index], imag(ω))
+     γHz = imag(ω) * w0 / 2π # imag frequency in Hz
+     syntheticspectrum[index] = max(syntheticspectrum[index], γHz)
    end
-   xlabel = "\$\\mathrm{Frequency} \\ [\\MHz]\$"
-   ylabel = "\$\\mathrm{Growth\\ Rate} \\ [^{\\Omega_{i}}]\$"
-   Plots.plot(freq_bins_Hz ./ 1e6, syntheticspectrum, xlabel=xlabel, ylabel=ylabel)
+   xlabel = "\$\\mathrm{Frequency} \\ [\\mathrm{MHz}]\$"
+   ylabel = "\$\\mathrm{Growth\\ Rate} \\ [{\\mathrm{MHz}}]\$"
+   Plots.plot(freq_bins_Hz ./ 1e6, syntheticspectrum ./ 1e6, xlabel=xlabel, ylabel=ylabel)
    Plots.savefig("ICE2D_SyntheticSpectrum_$file_extension.pdf")
 end
 
