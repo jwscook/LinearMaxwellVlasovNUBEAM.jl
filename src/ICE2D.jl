@@ -1,6 +1,8 @@
 using Distributed, Dates, ArgParse
 using Plots, Random, ImageFiltering, Statistics
 using Dierckx, Contour, JLD2, DelimitedFiles, JLSO
+using Pkg
+Pkg.update("Plots")
 
 println("Starting at ", now())
 
@@ -62,6 +64,18 @@ argsettings = ArgParseSettings()
         help = "The ringbeam species will have a temperature equal to vthfracinj of the injection energy"
         arg_type = Float64
         default = 0.1
+    "--syntheticspectrumfreqmax"
+        help = "The upper limit in frequency of the synthetic spectrum, Hz"
+        arg_type = Float64
+        default = 200e6
+    "--syntheticspectrumnbins"
+        help = "The number of bins of the synthetic spectrum"
+        arg_type = Integer
+        default = 256
+    "--initialguessfilepath"
+        help = "The path to the results .jlso file to use for the starting state for optimisation"
+        arg_type = Union{Nothing,String}
+        default = nothing
 end
 
 include("NBI.jl")
@@ -96,6 +110,8 @@ const teev = parsedargs["electrontemperatureev"]
 const tpev = parsedargs["backgroundprotontemperatureev"]
 const tdev = parsedargs["backgrounddeuterontemperatureev"]
 const nd_ne = parsedargs["ratiothermalprotontoelectrons"]
+const syntheticspectrumfreqmax = parsedargs["syntheticspectrumfreqmax"]
+const syntheticspectrumnbins = parsedargs["syntheticspectrumnbins"]
 
 const ξ = parsedargs["nbidensityfraction"]# * ξfraction
 const mn = md = nbimassinprotons * 1836 * LinearMaxwellVlasov.mₑ
@@ -113,11 +129,13 @@ const Πn = plasmafrequency(nn, mn, 1)
 #@info "Creating nbi coupled species"
 #const _nbi_coupled = NBI.couplednbispecies(nbi_interp, Πn, Ωn)
 
+const initialguessfilepath = parsedargs["initialguessfilepath"]
 
 @info "Calculating nbi fit species with $nringbeams sub-populations"
 for _ in 1:niters # iterate and saves result after each
   NBI.differentialevolutionfitspecies(nbidata, Πn, Ωn, nn,
     nringbeams=nringbeams, timelimithours=timelimithours, targetfitness=0.01,
+    initialguessfilepath=initialguessfilepath
     )::Vector{NBI.TSpecies}
 end
 # read it from a file as a const
@@ -384,7 +402,7 @@ function selectpropagationrange(sols, lowangle=0, highangle=180)
   return output
 end
 
-Plots.pyplot()
+Plots.gr()
 function plotit(sols, file_extension=name_extension, fontsize=9)
   sols = sort(sols, by=s->imag(s.frequency))
   ωs = [sol.frequency for sol in sols]./w0
@@ -538,9 +556,10 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
   if sum(mask) > 0
     perm = sortperm(imag.(ωs[mask]))
     h0 = Plots.scatter(real.(ωs[mask][perm]), kzs[mask][perm],
-       zcolor=imag.(ωs[mask][perm]), framestyle=:box, lims=:round,
+      zcolor=log10.(imag.(ωs[mask][perm])), framestyle=:box, lims=:round,
       markersize=msize+1, markerstrokewidth=0, markershape=:circle,
-      c=colorgrad, xticks=(0:12), yticks=unique(Int.(round.(ykzs))),
+      c=colorgrad, yticks=unique(Int.(round.(ykzs))),
+      xticks=0:2:Int(round(maximum(real, ωs[mask]))),
       xlims=(0, ceil(maximum(real.(ωs[mask][perm])))+1),
       xlabel=xlabel, ylabel=ylabel, legend=:topleft)
     Plots.plot!(legend=false)
@@ -551,15 +570,16 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
       zcolor=kzs[mask], framestyle=:box,
       markersize=msize+1, markerstrokewidth=0, markershape=:circle,
       xlims=(0, ceil(maximum(real.(ωs[mask][perm])))+1),
-      c=colorgrad, xticks=(0:12), lims=:round,
+      c=colorgrad, lims=:round,
+      xticks=0:2:Int(round(maximum(real, ωs[mask]))),
       xlabel=xlabel, ylabel=ylabel, legend=:topleft)
     Plots.plot!(legend=false)
     Plots.savefig("ICE2D_GF_$file_extension.pdf")
 
     ylabel = "\$\\mathrm{Frequency} \\ [\\Omega_{i}]\$"
-    xlabel = "\$\\mathrm{Wavenumber} \\ [\\Omega_{i} / V_A]\$"
+    xlabel = "\$\\mathrm{Parallel\\ Wavenumber} \\ [\\Omega_{i} / V_A]\$"
     h1 = Plots.scatter(kzs[mask], real.(ωs[mask]),
-      zcolor=imag.(ωs[mask]), framestyle=:box,
+      zcolor=log10.(imag.(ωs[mask])), framestyle=:box,
       markersize=msize+1, markerstrokewidth=0, markershape=:circle,
       c=colorgrad, xlims=(-2, 2), lims=:round,
       xlabel=xlabel, ylabel=ylabel, legend=:topleft)
@@ -571,12 +591,13 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
 
     colorgrad = Plots.cgrad([:cyan, :black, :darkred, :red, :orange, :yellow])
     h4 = Plots.scatter(real.(ωs[mask]), kθs[mask] .* 180 / π,
-      zcolor=imag.(ωs[mask]),
+      zcolor=log10.(imag.(ωs[mask])),
       markersize=msize, markerstrokewidth=0, markershape=mshape, framestyle=:box,
       c=Plots.cgrad([:black, :darkred, :red, :orange, :yellow]),
-      clims=(0, maximum(imag.(ωs[mask]))), lims=:round,
+      clims=(0, maximum(log10.(imag.(ωs[mask])))), lims=:round,
       xlims=(0, ceil(maximum(real.(ωs[mask][perm])))+1),
-      yticks=(0:10:180), xticks=(0:12), xlabel=xlabel, ylabel=ylabel)
+      xticks=0:2:Int(round(maximum(real, ωs[mask]))),
+      yticks=(0:10:180), xlabel=xlabel, ylabel=ylabel)
     Plots.plot!(legend=false)
     Plots.savefig("ICE2D_TF_$file_extension.pdf")
 
@@ -585,6 +606,19 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
     Plots.plot(h1, h0, link=:x, layout=@layout [a; b])
     Plots.savefig("ICE2D_Combo_$file_extension.pdf")
   end
+
+   freq_bins_Hz = collect(range(0, stop=syntheticspectrumfreqmax, length=syntheticspectrumnbins))
+   syntheticspectrum = zeros(syntheticspectrumnbins)
+   for ω in ωs
+     fHz = real(ω) * w0 / 2π # real frequency in Hz
+     index = findlast(x->fHz > x, freq_bins_Hz)
+     (1 <= index <= syntheticspectrumnbins) || continue
+     syntheticspectrum[index] = max(syntheticspectrum[index], imag(ω))
+   end
+   xlabel = "\$\\mathrm{Frequency} \\ [\\MHz]\$"
+   ylabel = "\$\\mathrm{Growth\\ Rate} \\ [^{\\Omega_{i}}]\$"
+   Plots.plot(freq_bins_Hz ./ 1e6, syntheticspectrum, xlabel=xlabel, ylabel=ylabel)
+   Plots.savefig("ICE2D_SyntheticSpectrum_$file_extension.pdf")
 end
 
 if true

@@ -237,6 +237,9 @@ Optional args:
 - `targetfitness=0.01`:
 - `traceinterval=600.0`: in seconds
 - `performoptimisation=true::Vector{TSpecies}`: when false, this reads data from file and returns it
+- `initialguessfilepath=nothing`: If not nothing then it must be a string to a file,
+  e.g. "BlackBoxOptim_results_<hash>.jlso", which contains a previous optimisation result
+  that will be used as the initial guess for this optimisation
 ...
 
 # Example
@@ -246,7 +249,7 @@ Optional args:
 function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity;
     nringbeams=100, bboptimizemethod=:adaptive_de_rand_1_bin,
     timelimithours=12, targetfitness=0.01, traceinterval=600.0,
-    performoptimisation=true)::Vector{TSpecies}
+    performoptimisation=true, initialguessfilepath=nothing)::Vector{TSpecies}
 
   cachehash = foldr(hash, (Π, Ω, numberdensity, nringbeams, bboptimizemethod);
                     init=hash(nbidata))
@@ -353,7 +356,13 @@ function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity
   ix = rand(ncomponents_per_ringbeam * nringbeams)
 
   t = @elapsed res = if performoptimisation
-    bboptimize(optctrl;
+    initialguess = if !isnothing(initialguessfilepath)
+      @info "Starting optimisation state from $initialguessfilepath"
+      loaded = JLSO.load(initialguessfilepath)
+      initialguessres = loaded[:results]
+      best_candidate(initialguessres)
+    end
+    bboptimize(optctrl, initialguess;
       TraceMode = :compact,
       MaxTime = 3600 * timelimithours,
       MaxSteps = 1_000_000,
