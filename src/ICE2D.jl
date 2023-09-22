@@ -535,6 +535,8 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
 #  Plots.savefig("ICE2D_evenfloorreal_real_$file_extension.pdf")
 
   zs = imag.(ωs)
+  zs[zs .< 0] .= NaN
+  zs .= log10.(zs)
   climmax = maximum(zs)
   colorgrad = Plots.cgrad([:cyan, :black, :darkred, :red, :orange, :yellow])
   plotter2d(zs, xlabel, ylabel, colorgrad, -climmax / 4, climmax)
