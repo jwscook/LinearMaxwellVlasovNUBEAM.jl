@@ -16,7 +16,9 @@ const ncomponents_per_ringbeam = 5
 const TSpecies = SeparableVelocitySpecies{Float64, Float64, FBeam{Float64, Float64, LinearMaxwellVlasov.ShiftedMaxwellianParallel{Float64, Float64}}, FRing{Float64, Float64, LinearMaxwellVlasov.ShiftedMaxwellianPerpendicular{Float64, Float64, Float64}}}
 
 
-@auto_hash_equals struct NBIData
+abstract type AbstractNBIData end
+
+@auto_hash_equals struct NBIDataEnergyPitch <: AbstractNBIData
   massnumber::Int
   fname::String
   fdata::Matrix{Float64}
@@ -24,9 +26,12 @@ const TSpecies = SeparableVelocitySpecies{Float64, Float64, FBeam{Float64, Float
   sqrt1_p²data::Vector{Float64}
   edata::Vector{Float64}
   fmax::Float64
+  speedmin::Float64
+  speedrange::Float64
 end
+
 """
-    NBIData(fname,massnumber=2;energysamplestep=1,pitchsamplestep=1,energykevlowcutoff=0.0,energykevhighcutoff=Inf,pitchlowcutoff=-Inf,pitchhighcutoff=Inf,padpitch_neumann_bc=false,nzerocolpad=1)
+    NBIDataEnergyPitch(fname,massnumber=2;energysamplestep=1,pitchsamplestep=1,energykevlowcutoff=0.0,energykevhighcutoff=Inf,pitchlowcutoff=-Inf,pitchhighcutoff=Inf,padpitch_neumann_bc=false,nzerocolpad=1)
 
 description
 
@@ -49,7 +54,7 @@ Optional args:
 ```julia
 ```
 """
-function NBIData(fname, massnumber=2;
+function NBIDataEnergyPitch(fname, massnumber=2;
     energysamplestep=1,
     pitchsamplestep=1,
     energykevlowcutoff=0.0,
@@ -97,27 +102,76 @@ function NBIData(fname, massnumber=2;
   fmax = maximum(fnb[:])
   fnb ./= fmax
 
-  return NBIData(massnumber, fname, fnb, pitch, sqrt.(1 .- pitch.^2), energy, fmax)
+  mass = massnumber * 1836mₑ
+  v²perkeV = 1000q₀ * 2 / mass
+
+  speedmin = sqrt(minimum(edata) * v²perkeV)
+  speedrange = sqrt(maximum(edata) * v²perkeV) - speedmin
+
+  return NBIDataEnergyPitch(massnumber, fname, fnb, pitch, sqrt.(1 .- pitch.^2), energy, fmax, speedmin, speedrange)
 end
 
-peakpitch(n::NBIData) = n.pdata[findmax(n.fdata)[2][1]]
-peakenergy(n::NBIData) = n.edata[findmax(n.fdata)[2][2]]
-maxenergy(n::NBIData) = n.edata[end]
-maxspeed(n::NBIData) = sqrt(maxenergy(n) * 1000q₀ * 2 / (n.massnumber * 1836mₑ))
+pitchofpeak(n::NBIDataEnergyPitch) = n.pdata[findmax(n.fdata)[2][1]]
+energyofpeakkev(n::NBIDataEnergyPitch) = n.edata[findmax(n.fdata)[2][2]]
+maxenergy(n::NBIDataEnergyPitch) = n.edata[end]
+maxspeed(n::NBIDataEnergyPitch) = sqrt(maxenergy(n) * 1000q₀ * 2 / (n.massnumber * 1836mₑ))
 
-Base.size(n::NBIData) = size(n.fdata)
+pitchmin(n::NBIDataEnergyPitch) = minimum(n.pdata)
+pitchrange(n::NBIDataEnergyPitch) = maximum(n.pdata) - pitchmin(n)
+
+@auto_hash_equals struct NBIDataVparaVperp <: AbstractNBIData
+  massnumber::Int
+  fname::String
+  fdata::Matrix{Float64}
+  vperpdata::Vector{Float64}
+  vparadata::Vector{Float64}
+  fmax::Float64
+  pitchofpeak::Float64
+  energyofpeakkev::Float64
+end
+
+function NBIDataVparaVperp(fname, massnumber=2;)
+
+  fnb = h5read(fname, "C")
+  vperpdata = h5read(fname, "VPERP")[:, 1][:]
+  vparadata = h5read(fname, "VPAR")[1, :][:]
+
+  fmax, ind = findmax(fnb)
+  fnb ./= fmax
+
+  speedofpeak = sqrt(vparadata[ind[2]]^2 + vperpdata[ind[1]]^2)
+  pitchofpeak = vparadata[ind[2]] / speedofpeak
+  energyofpeakkeV = 0.5 * 1836mₑ * massnumber * speedofpeak^2 / 1000q₀
+
+  return NBIDataVparaVperp(massnumber, fname, fnb, vperpdata, vparadata, fmax, pitchofpeak, energyofpeakkeV)
+end
+
+pitchofpeak(n::NBIDataVparaVperp) = n.pitchofpeak
+energyofpeakkev(n::NBIDataVparaVperp) = n.energyofpeakkev
+maxspeed(n::NBIDataVparaVperp) = sqrt(maximum(n.vparadata.^2 .+ n.vperpdata'.^2))
+
+speedmin(n::NBIDataEnergyPitch) = n.speedmin
+speedrange(n::NBIDataEnergyPitch) = n.speedrange
+speedmin(n::NBIDataVparaVperp) = sqrt(minimum(n.vparadata.^2 .+ n.vperpdata'.^2))
+speedrange(n::NBIDataVparaVperp) = diff(collect(extrema(sqrt.(n.vparadata.^2 .+ n.vperpdata'.^2))))[1]
+
+pitchmin(n::NBIDataVparaVperp) = minimum(n.vparadata ./ sqrt.(n.vparadata.^2 .+ n.vperpdata'.^2))
+pitchmax(n::NBIDataVparaVperp) = maximum(n.vparadata ./ sqrt.(n.vparadata.^2 .+ n.vperpdata'.^2))
+pitchrange(n::NBIDataVparaVperp) = pitchmax(n) - pitchmin(n)
+
+Base.size(n::AbstractNBIData) = size(n.fdata)
 
 struct NBIInterpVelocitySpace{T} <: Function
   interp::T
-  nbidata::NBIData
+  nbidata::NBIDataEnergyPitch
   keVperv²::Float64
   minpitch::Float64
   maxpitch::Float64
   minenergy::Float64
   maxenergy::Float64
 end
-peakspeed(n::NBIInterpVelocitySpace) = sqrt(peakenergy(n.nbidata) / n.keVperv²)
-peakpitch(n::NBIInterpVelocitySpace) = peakpitch(n.nbidata)
+speedofpeak(n::NBIInterpVelocitySpace) = sqrt(energyofpeakkev(n.nbidata) / n.keVperv²)
+pitchofpeak(n::NBIInterpVelocitySpace) = pitchofpeak(n.nbidata)
 maxspeed(n::NBIInterpVelocitySpace) = sqrt(maxenergy(n.nbidata) / n.keVperv²)
 
 function prepend!(v::Vector, x::Number)
@@ -126,8 +180,8 @@ function prepend!(v::Vector, x::Number)
   v[1] = x
 end
 
-function NBIInterpVelocitySpace(nbidata::NBIData)
-  mass = nbidata.massnumber * 1836 * mₑ
+function NBIInterpVelocitySpace(nbidata::NBIDataEnergyPitch)
+  mass = nbidata.massnumber * 1836mₑ
   v²perkeV = 1000q₀ * 2 / mass
   keVperv² = 1 / v²perkeV
 
@@ -182,14 +236,14 @@ function cacheic_fname(tuple)
 end
 
 """
-    optctrl_generator(objective::F,nbidata::NBIData,nringbeams::Int,bboptimizemethod,targetfitness,traceinterval)whereF
+    optctrl_generator(objective::F,nbidata::AbstractNBIData,nringbeams::Int,bboptimizemethod,targetfitness,traceinterval)whereF
 
 This creates an optimisation control struct for internal use by BlackBoxOptim
 
 ...
 # Arguments
 - `objective::F`:  the objective function
-- `nbidata::NBIData`: the data to fit turbo
+- `nbidata::AbstractNBIData`: the data to fit turbo
 - `nringbeams::Int`:  the number of ring-beams
 - `bboptimizemethod`: the method used internally by BlackBoxOptim
 - `targetfitness`: the target fitness for the fitting to achieve
@@ -200,7 +254,7 @@ This creates an optimisation control struct for internal use by BlackBoxOptim
 ```julia
 ```
 """
-function optctrl_generator(objective::F, nbidata::NBIData, nringbeams::Int,
+function optctrl_generator(objective::F, nbidata::AbstractNBIData, nringbeams::Int,
     bboptimizemethod, targetfitness, traceinterval) where F
   fname = cacheic_fname((nbidata, nringbeams, bboptimizemethod, targetfitness, traceinterval))
   optctrl = if isfile(fname)
@@ -220,13 +274,13 @@ function optctrl_generator(objective::F, nbidata::NBIData, nringbeams::Int,
 end
 
 """
-    differentialevolutionfitspecies(nbidata::NBIData,Π,Ω,numberdensity;nringbeams=100,bboptimizemethod=:adaptive_de_rand_1_bin,timelimithours=12,targetfitness=0.01,traceinterval=600.0,performoptimisation=true)::Vector{TSpecies}
+    differentialevolutionfitspecies(nbidata::AbstractNBIData,Π,Ω,numberdensity;nringbeams=100,bboptimizemethod=:adaptive_de_rand_1_bin,timelimithours=12,targetfitness=0.01,traceinterval=600.0,performoptimisation=true)::Vector{TSpecies}
 
 Return a vector of RingBeam Species that best fit the data given the parameters
 
 ...
 # Arguments
-- `nbidata::NBIData`:
+- `nbidata::AbstractNBIData`:
 - `Π`: the plasma frequency of the whole energetic ion population
 - `Ω`: the cyclotron frequency
 - `numberdensity`: total number density of energetic ion population
@@ -246,7 +300,7 @@ Optional args:
 ```julia
 ```
 """
-function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity;
+function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numberdensity;
     nringbeams=100, bboptimizemethod=:adaptive_de_rand_1_bin,
     timelimithours=12, targetfitness=0.01, traceinterval=600.0,
     performoptimisation=true, initialguessfilepath=nothing)::Vector{TSpecies}
@@ -254,7 +308,7 @@ function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity
   cachehash = foldr(hash, (Π, Ω, numberdensity, nringbeams, bboptimizemethod);
                     init=hash(nbidata))
 
-  mass = nbidata.massnumber * 1836 * mₑ
+  mass = nbidata.massnumber * 1836mₑ
   v²perkeV = 1000q₀ * 2 / mass
 
   @info "Generating differential evolution species."
@@ -262,17 +316,17 @@ function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity
   smax = maxspeed(nbidata)
   maxvth = smax / 4
 
-  pmin = minimum(nbidata.pdata)
-  plen = maximum(nbidata.pdata) - pmin
+  pmin = pitchmin(nbidata)
+  plen = pitchrange(nbidata)
 
-  vmin = sqrt(minimum(nbidata.edata) * v²perkeV)
-  vlen = sqrt(maximum(nbidata.edata) * v²perkeV) - vmin
+  smin = speedmin(nbidata)
+  srange = speedrange(nbidata)
 
   function speciesparams(x)
     @assert length(x) == ncomponents_per_ringbeam
     amp = sqrt(abs(x[1]))
     p = pmin + plen * x[2] # particle pitch [pmin, pmax]
-    v = vmin + vlen * x[3] # particle speed
+    v = smin + srange * x[3] # particle speed
     uz = v * p
     u⊥ = v * sqrt(1 - p^2)
     vthz = maxvth * x[4]
@@ -296,7 +350,19 @@ function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity
 
   M = zeros(Float64, (size(nbidata)..., Threads.nthreads()))
   M0 = zeros(Float64, size(nbidata))
-  function objectivefit(x)
+
+  function reducematrices!(M0, M)
+    @inbounds @turbo for i in eachindex(M0)
+      M0[i] = 0
+    end
+    @inbounds @turbo for k in 1:size(M, 3), j in 1:size(M, 2), i in 1:size(M, 1)
+      M0[i, j] += M[i, j, k]
+      M[i, j, k] = 0
+    end
+    return M0
+  end
+
+  function objectivefit(x, nbidata::NBIDataEnergyPitch)
     @threads for k in 1:nringbeams
       s = speciesscalar(k, x)
       ρ = density(s, mass)
@@ -312,17 +378,25 @@ function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity
         end
       end
     end
-    @inbounds @turbo for i in eachindex(M0)
-      M0[i] = 0
+    M0 = reducematrices!(M0, M)
+    return M0
+  end
+  function objectivefit(x, nbidata::NBIDataVparaVperp)
+    @threads for k in 1:nringbeams
+      s = speciesscalar(k, x)
+      ρ = density(s, mass)
+      Mlocal = @view M[:, :, Threads.threadid()]
+      @turbo for (j, vz) in enumerate(nbidata.vparadata)
+        for (i, v⊥) in enumerate(nbidata.vperpdata)
+          @inbounds Mlocal[i, j] += s(vz, v⊥) * ρ
+        end
+      end
     end
-    @inbounds @turbo for k in 1:size(M, 3), j in 1:size(M, 2), i in 1:size(M, 1)
-      M0[i, j] += M[i, j, k]
-      M[i, j, k] = 0
-    end
+    M0 = reducematrices!(M0, M)
     return M0
   end
 
-  function rescalebyjacobians!(A)
+  function rescalebyjacobians!(A, nbidata::NBIDataEnergyPitch)
     @turbo for (j, ekev) in enumerate(nbidata.edata)
       v = sqrt(ekev * v²perkeV)
       #=
@@ -336,12 +410,13 @@ function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity
     end
     return A
   end
+  rescalebyjacobians!(A, nbidata::NBIDataVparaVperp) = A
 
   fnorm = norm(nbidata.fdata)
 
   function objective(x)
-    A = objectivefit(x)
-    rescalebyjacobians!(A)
+    A = objectivefit(x, nbidata)
+    rescalebyjacobians!(A, nbidata)
     maxA = maximum(A)
     @turbo for i in eachindex(A, nbidata.fdata)
       A[i] /= maxA
@@ -391,14 +466,25 @@ function differentialevolutionfitspecies(nbidata::NBIData, Π, Ω, numberdensity
     :nbi_species => nbi_species,
     :maxspeed => smax)
 
+  if typeof(nbidata) <: NBIDataEnergyPitch
   JLSO.save("BlackBoxOptim_plotdata_$(cachehash).jlso",
     :nbi_species => nbi_species,
     :maxspeed => smax,
     :edata => nbidata.edata,
     :pdata => nbidata.pdata,
     :fdata => nbidata.fdata,
-    :scaledfit => deepcopy(objectivefit(xbest)),
-    :fit => rescalebyjacobians!(deepcopy(objectivefit(xbest))))
+    :scaledfit => deepcopy(objectivefit(xbest, nbidata)),
+    :fit => rescalebyjacobians!(deepcopy(objectivefit(xbest, nbidata)), nbidata))
+  elseif typeof(nbidata) <: NBIDataVparaVperp
+  JLSO.save("BlackBoxOptim_plotdata_$(cachehash).jlso",
+    :nbi_species => nbi_species,
+    :maxspeed => smax,
+    :vparadata => nbidata.vparadata,
+    :vperpdata => nbidata.vperpdata,
+    :fdata => nbidata.fdata,
+    :scaledfit => deepcopy(objectivefit(xbest, nbidata)),
+    :fit => rescalebyjacobians!(deepcopy(objectivefit(xbest, nbidata)), nbidata))
+  end
 
   JLSO.save(cacheic_fname((nbidata, nringbeams, bboptimizemethod, targetfitness, traceinterval)),
             :optctrl => optctrl, :xbest => xbest)
@@ -410,8 +496,8 @@ density(Π::Real, mass) = Π^2 / q₀^2 * mass * LinearMaxwellVlasov.ϵ₀
 density(s, mass) = density(s.Π, mass)
 
 function couplednbispecies(nbiinterp::NBIInterpVelocitySpace, Π, Ω)
-  vinj = peakspeed(nbiinterp)
-  pitch = peakpitch(nbiinterp)
+  vinj = speedofpeak(nbiinterp)
+  pitch = pitchofpeak(nbiinterp)
 
   vzinj = vinj * pitch
   v⊥inj = vinj * sqrt(1 - pitch^2)

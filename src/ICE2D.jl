@@ -98,10 +98,20 @@ const n0 = parsedargs["electrondensity"]
 const B0 = parsedargs["magneticfield"]
 
 @info "Reading nbi data"
-const nbidata = NBI.NBIData(parsedargs["nubeamfilename"], nbimassinprotons;
-  pitchlowcutoff=-1.0, pitchhighcutoff=1.0,
-  energykevlowcutoff=0.0, energykevhighcutoff=Inf,
-  padpitch_neumann_bc=true)
+
+const nbidata = try
+  _nbidata = NBI.NBIDataEnergyPitch(parsedargs["nubeamfilename"], nbimassinprotons;
+    pitchlowcutoff=-1.0, pitchhighcutoff=1.0,
+    energykevlowcutoff=0.0, energykevhighcutoff=Inf,
+    padpitch_neumann_bc=true)
+  @info "Creating an NBIDataEnergyPitch from the data"
+  _nbidata
+catch err
+  _nbidata = NBI.NBIDataVparaVperp(parsedargs["nubeamfilename"], nbimassinprotons;)
+  @info "Creating an NBIDataVparaVperp from the data"
+  _nbidata
+end
+
 
 const timelimithours = parsedargs["timelimithours"]
 const niters = parsedargs["niters"]
@@ -145,8 +155,8 @@ const _nbi_ringbeamsfit = NBI.differentialevolutionfitspecies(nbidata, Πn, Ωn,
 
 @info "nbi_ringbeamsfit has been obtained"
 
-const peakenergykev = NBI.peakenergy(nbidata)
-const pitchofmax = NBI.peakpitch(nbidata)
+const peakenergykev = NBI.energyofpeakkev(nbidata)
+const pitchofmax = NBI.pitchofpeak(nbidata)
 
 const nprocsadded = div(Sys.CPU_THREADS, 2)
 addprocs(nprocsadded, exeflags=["--project", "-t 1"])
@@ -580,7 +590,7 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
 
     ylabel = "\$\\mathrm{Frequency} \\ [\\Omega_{i}]\$"
     xlabel = "\$\\mathrm{Parallel\\ Wavenumber} \\ [\\Omega_{i} / V_A]\$"
-    h1 = Plots.scatter(kzs[mask], real.(ωs[mask]),
+    h2 = Plots.scatter(kzs[mask], real.(ωs[mask]),
       zcolor=log10.(imag.(ωs[mask])), framestyle=:box,
       markersize=msize+1, markerstrokewidth=0, markershape=:circle,
       c=colorgrad, xlims=(-2, 2), lims=:round,
