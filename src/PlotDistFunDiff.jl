@@ -3,9 +3,17 @@ using Plots, JLSO
 fname = String(ARGS[1]);
 
 loaded = JLSO.load(fname)
-x = loaded[:edata];
 
-y = loaded[:pdata];
+x = try
+  loaded[:edata];
+catch err
+  loaded[:vparadata];
+end
+y = try
+  loaded[:pdata];
+catch err
+  loaded[:vperpdata];
+end
 
 z0 = loaded[:fdata];
 
