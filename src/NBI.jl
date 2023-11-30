@@ -123,8 +123,8 @@ pitchrange(n::NBIDataEnergyPitch) = maximum(n.pdata) - pitchmin(n)
   massnumber::Int
   fname::String
   fdata::Matrix{Float64}
-  vperpdata::Vector{Float64}
   vparadata::Vector{Float64}
+  vperpdata::Vector{Float64}
   fmax::Float64
   pitchofpeak::Float64
   energyofpeakkev::Float64
@@ -133,8 +133,11 @@ end
 function NBIDataVparaVperp(fname, massnumber=2; cutoffbelowvpara=-Inf, cutoffwidthvpara=1e100)
 
   fnb = transpose(h5read(fname, "C"))
-  vperpdata = h5read(fname, "VPERP")[:, 1][:]
   vparadata = h5read(fname, "VPAR")[1, :][:]
+  vperpdata = h5read(fname, "VPERP")[:, 1][:]
+
+  @assert size(fnb, 1) == length(vparadata)
+  @assert size(fnb, 2) == length(vperpdata)
 
   cutoffmask = (0.5 .+ 0.5 .* erf.((vparadata .- cutoffbelowvpara) ./ cutoffwidthvpara))
   @assert minimum(cutoffmask) >= 0
@@ -148,7 +151,7 @@ function NBIDataVparaVperp(fname, massnumber=2; cutoffbelowvpara=-Inf, cutoffwid
   pitchofpeak = vparadata[ind[2]] / speedofpeak
   energyofpeakkeV = 0.5 * 1836mₑ * massnumber * speedofpeak^2 / 1000q₀
 
-  return NBIDataVparaVperp(massnumber, fname, fnb, vperpdata, vparadata, fmax, pitchofpeak, energyofpeakkeV)
+  return NBIDataVparaVperp(massnumber, fname, fnb, vparadata, vperpdata, fmax, pitchofpeak, energyofpeakkeV)
 end
 
 pitchofpeak(n::NBIDataVparaVperp) = n.pitchofpeak
