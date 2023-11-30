@@ -130,11 +130,16 @@ pitchrange(n::NBIDataEnergyPitch) = maximum(n.pdata) - pitchmin(n)
   energyofpeakkev::Float64
 end
 
-function NBIDataVparaVperp(fname, massnumber=2;)
+function NBIDataVparaVperp(fname, massnumber=2; cutoffbelowvpara=-Inf, cutoffwidthvpara=1e100)
 
-  fnb = h5read(fname, "C")
+  fnb = transpose(h5read(fname, "C"))
   vperpdata = h5read(fname, "VPERP")[:, 1][:]
   vparadata = h5read(fname, "VPAR")[1, :][:]
+
+  cutoffmask = (0.5 .+ 0.5 .* erf.((vparadata .- cutoffbelowvpara) ./ cutoffwidthvpara))
+  @assert minimum(cutoffmask) >= 0
+  @assert maximum(cutoffmask) <= 1
+  fnb .*= cutoffmask
 
   fmax, ind = findmax(fnb)
   fnb ./= fmax

@@ -107,7 +107,8 @@ const nbidata = try
   @info "Creating an NBIDataEnergyPitch from the data"
   _nbidata
 catch err
-  _nbidata = NBI.NBIDataVparaVperp(parsedargs["nubeamfilename"], nbimassinprotons;)
+  _nbidata = NBI.NBIDataVparaVperp(parsedargs["nubeamfilename"], nbimassinprotons;
+    cutoffbelowvpara=0.0, cutoffwidthvpara=1e6)
   @info "Creating an NBIDataVparaVperp from the data"
   _nbidata
 end
