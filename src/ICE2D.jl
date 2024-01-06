@@ -274,8 +274,8 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   w0 = abs(Ωd)
   k0 = w0 / abs(Va)
 
-  grmax = abs(Ωn) * 0.005
-  grmin = -grmax / 2
+  grmax = abs(Ωn) * 0.5
+  grmin = -grmax / 4
   function bounds(ω0)
     lb = @SArray [ω0 * 0.5, grmin]
     ub = @SArray [ω0 * 1.2, grmax]
@@ -313,7 +313,8 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
     config = Configuration(K, options)
 
-    ics = ((@SArray [ω0*0.95, grmax*0.8]),
+    ics = ((@SArray [ω0*0.8, grmax*0.8]),
+           (@SArray [ω0*1.1, grmax*0.8]),
            (@SArray [ω0*0.95, grmax*0.4]),
            (@SArray [ω0*0.95, grmax*0.2]),
            (@SArray [ω0*0.95, grmax*0.1]))
@@ -546,6 +547,15 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
 #  Plots.savefig("ICE2D_evenfloorreal_real_$file_extension.pdf")
 
   zs = imag.(ωs)
+  climmax = maximum(zs)
+  colorgrad = Plots.cgrad([:cyan, :black, :darkred, :red, :orange, :yellow])
+  plotter2d(zs, xlabel, ylabel, colorgrad, -climmax / 4, climmax)
+  Plots.title!(" ")
+  Plots.plot!(legend=false)
+  plotcontours(realspline, collect(1:50), y -> y[end] < 0)
+  plotangles(writeangles=false)
+  Plots.savefig("ICE2D_imag_$file_extension.pdf")
+
   zs[zs .< 0] .= NaN
   zs .= log10.(zs)
   climmax = maximum(zs)
@@ -555,7 +565,8 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
   Plots.plot!(legend=false)
   plotcontours(realspline, collect(1:50), y -> y[end] < 0)
   plotangles(writeangles=false)
-  Plots.savefig("ICE2D_imag_$file_extension.pdf")
+  Plots.savefig("ICE2D_log10_imag_$file_extension.pdf")
+
 
   colorgrad = Plots.cgrad()
 
@@ -569,7 +580,7 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
   if sum(mask) > 0
     perm = sortperm(imag.(ωs[mask]))
     h0 = Plots.scatter(real.(ωs[mask][perm]), kzs[mask][perm],
-      zcolor=log10.(imag.(ωs[mask][perm])), framestyle=:box, lims=:round,
+      zcolor=imag.(ωs[mask][perm]), framestyle=:box, lims=:round,
       markersize=msize+1, markerstrokewidth=0, markershape=:circle,
       c=colorgrad, yticks=unique(Int.(round.(ykzs))),
       xticks=0:2:Int(round(maximum(real, ωs[mask]))),
@@ -635,7 +646,7 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
    Plots.savefig("ICE2D_SyntheticSpectrum_$file_extension.pdf")
 end
 
-if true
+if true#false#
   @time plasmasols = findsolutions(Smms, Smmc)
   plasmasols = selectlargeestgrowthrate(plasmasols)
   @show length(plasmasols)
@@ -644,8 +655,8 @@ if true
   rmprocs(nprocsadded)
 else
   rmprocs(nprocsadded)
-  @load "solutions2D_$name_extension.jld" filecontents solutions w0 k0
-  @time plotit(solutions)
+  @load "solutions2D_$name_extension.jld" filecontents plasmasols w0 k0
+  @time plotit(plasmasols)
 end
 
 println("Ending at ", now())
