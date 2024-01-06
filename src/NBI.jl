@@ -322,7 +322,7 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   @info "Generating differential evolution species."
 
   smax = maxspeed(nbidata)
-  maxvth = smax / 4
+  maxvth = smax / 2
 
   pmin = pitchmin(nbidata)
   plen = pitchrange(nbidata)
