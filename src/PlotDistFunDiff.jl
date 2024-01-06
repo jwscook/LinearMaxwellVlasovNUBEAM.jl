@@ -5,14 +5,18 @@ fname = String(ARGS[1]);
 loaded = JLSO.load(fname)
 
 x = try
-  loaded[:edata];
+  x = loaded[:edata];
+  @info "Plotting energy and pitch"
+  x
 catch err
-  loaded[:vparadata];
+  loaded[:vperpdata];
+  @info "Plotting vpara and vperp"
+  x
 end
 y = try
   loaded[:pdata];
 catch err
-  loaded[:vperpdata];
+  x = loaded[:vparadata];
 end
 
 z0 = loaded[:fdata];
@@ -22,7 +26,6 @@ z1 ./= maximum(z1);
 
 z2 = loaded[:scaledfit];
 z2 ./= maximum(z2);
-
 
 h0 = heatmap(x, y, z0, title="data")
 h1 = heatmap(x, y, z1, title="fit")

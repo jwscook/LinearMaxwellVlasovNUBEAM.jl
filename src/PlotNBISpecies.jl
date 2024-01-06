@@ -10,12 +10,12 @@ nbi_species = loaded[:nbi_species];
 x = try
   loaded[:edata];
 catch err
-  loaded[:vparadata];
+  loaded[:vperpdata];
 end
 y = try
   loaded[:pdata];
 catch err
-  loaded[:vperpdata];
+  loaded[:vparadata];
 end
 
 z0 = loaded[:fdata];
