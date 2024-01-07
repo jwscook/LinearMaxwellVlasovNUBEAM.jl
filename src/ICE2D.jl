@@ -175,6 +175,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 @everywhere using Serialization
 @everywhere using InteractiveUtils
 @everywhere using Roots
+@everywhere using NLsolve
 @everywhere include("NBI.jl")
 @everywhere using .NBI # have to re-add this for some reason?
 @everywhere begin
@@ -328,21 +329,30 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
     xtol_abs = w0 .* (@SArray [1e-4, 1e-5]) ./ (ub .- lb)
     @elapsed for ic ∈ ics
       @assert all(i->lb[i] <= ic[i] <= ub[i], eachindex(ic))
-      neldermeadsol = WindingNelderMead.optimise(
-        boundedunitobjective!, SArray((ic .- lb) ./ (ub .- lb)),
-        1.0e-2 * (@SArray ones(2)); stopval=1e-15, timelimit=3600,
-        maxiters=150, ftol_rel=0, ftol_abs=0, xtol_rel=0, xtol_abs=xtol_abs)
-      simplex, windingnumber, returncode, numiterations = neldermeadsol
-      if (windingnumber == 1 && returncode == :XTOL_REACHED)# || returncode == :STOPVAL_REACHED
+      #neldermeadsol = WindingNelderMead.optimise(
+      #  boundedunitobjective!, SArray((ic .- lb) ./ (ub .- lb)),
+      #  1.0e-2 * (@SArray ones(2)); stopval=1e-15, timelimit=3600,
+      #  maxiters=150, ftol_rel=0, ftol_abs=0, xtol_rel=0, xtol_abs=xtol_abs)
+      #simplex, windingnumber, returncode, numiterations = neldermeadsol
+      #if (windingnumber == 1 && returncode == :XTOL_REACHED)# || returncode == :STOPVAL_REACHED
+      #  c = deepcopy(config)
+      #  minimiser = if windingnumber == 0
+      #    WindingNelderMead.position(WindingNelderMead.bestvertex(simplex))
+      #  else
+      #    WindingNelderMead.centre(simplex)
+      #  end
+      #  unitobjective!(c, minimiser)
+      #  return c
+      #end
+
+      nlsolution = nlsolve(x->reim(boundedunitobjective!(x)),
+                           MArray((ic .- lb) ./ (ub .- lb)), xtol=1e-8, factor=0.01)
+      if nlsolution.x_converged || nlsolution.f_converged
         c = deepcopy(config)
-        minimiser = if windingnumber == 0
-          WindingNelderMead.position(WindingNelderMead.bestvertex(simplex))
-        else
-          WindingNelderMead.centre(simplex)
-        end
-        unitobjective!(c, minimiser)
+        objective!(c, lb .+  (ub .- lb) .* nlsolution.zero)
         return c
       end
+
     end
     return nothing
   end
