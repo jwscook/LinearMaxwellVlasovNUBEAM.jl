@@ -28,7 +28,7 @@ argsettings = ArgParseSettings()
         help = "The electron temperature in eV"
         arg_type = Float64
         default = 1.73e3
-    "--backgroundprotontemperatureev", "--th"
+    "--backgroundprotontemperatureev", "--tp"
         help = "The background proton temperature in eV"
         arg_type = Float64
         default = 1.0e3
@@ -36,7 +36,7 @@ argsettings = ArgParseSettings()
         help = "The background dueteron temperature in eV"
         arg_type = Float64
         default = 1.0e3
-    "--ratiothermalprotontoelectrons", "--np_nd"
+    "--ratiothermalprotontoelectrons", "--np_ne"
         help = "The ratio of number densities of thermal H to electrons, n_p / n_e"
         arg_type = Float64
         default = 0.0
@@ -122,15 +122,16 @@ const niters = parsedargs["niters"]
 const teev = parsedargs["electrontemperatureev"]
 const tpev = parsedargs["backgroundprotontemperatureev"]
 const tdev = parsedargs["backgrounddeuterontemperatureev"]
-const nd_ne = parsedargs["ratiothermalprotontoelectrons"]
+const np_ne = parsedargs["ratiothermalprotontoelectrons"]
 const syntheticspectrumfreqmax = parsedargs["syntheticspectrumfreqmax"]
 const syntheticspectrumnbins = parsedargs["syntheticspectrumnbins"]
 
 const ξ = parsedargs["nbidensityfraction"]# * ξfraction
-const mn = md = nbimassinprotons * 1836 * LinearMaxwellVlasov.mₑ
+const md = 2 * 1836 * LinearMaxwellVlasov.mₑ
+const mn = nbimassinprotons * 1836 * LinearMaxwellVlasov.mₑ
 const nn = n0 * ξ # number density of nbi
-const nd = nd_ne * n0 # number density of background thermal D
-const np = n0 - nn - nd # number density of background thermal H
+const np = np_ne * n0 # number density of background thermal H
+const nd = n0 - nn - np # number density of background thermal D
 @assert n0 ≈ nn + nd + np
 
 const Ωn = cyclotronfrequency(B0, mn, 1)
