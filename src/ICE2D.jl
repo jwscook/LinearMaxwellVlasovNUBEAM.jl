@@ -88,7 +88,9 @@ const nringbeams = parsedargs["nringbeams"]
 const injenergymultiplier = parsedargs["injenergymultiplier"]
 const vthfracinj = parsedargs["vthfracinj"]
 
-const name_extension = filter(x -> !isspace(x), length(ARGS) > 0 ? "$(ARGS)" : "$(now())")
+const name_extension = replace(filter(x -> !isspace(x), length(ARGS) > 0 ? "$(ARGS)" : "$(now())"),
+                               "\"" => "")
+@show name_extension
 const filecontents = [i for i in readlines(open(@__FILE__))]
 
 using LinearMaxwellVlasov
@@ -278,8 +280,8 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   grmax = abs(Ωn) * 0.5
   grmin = -grmax / 4
   function bounds(ω0)
-    lb = @SArray [ω0 * 0.5, grmin]
-    ub = @SArray [ω0 * 1.2, grmax]
+    lb = @SArray [ω0 * 0.4, grmin]
+    ub = @SArray [ω0 * 1.3, grmax]
     return (lb, ub)
   end
 
@@ -327,6 +329,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
     unitobjectivex! = x -> unitobjective!(config, x)
     boundedunitobjective! = boundify(unitobjectivex!)
     xtol_abs = w0 .* (@SArray [1e-4, 1e-5]) ./ (ub .- lb)
+    solsvector = []
     @elapsed for ic ∈ ics
       @assert all(i->lb[i] <= ic[i] <= ub[i], eachindex(ic))
       #neldermeadsol = WindingNelderMead.optimise(
@@ -350,11 +353,13 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
       if nlsolution.x_converged || nlsolution.f_converged
         c = deepcopy(config)
         objective!(c, lb .+  (ub .- lb) .* nlsolution.zero)
-        return c
+#        return c
+        push!(solsvector, c)
       end
 
     end
-    return nothing
+#    return nothing
+    return solsvector
   end
 
   function f2Dω!(config::Configuration, x::AbstractArray, plasma, cache)
@@ -383,7 +388,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
         K = Wavenumber(parallel=kz, perpendicular=k⊥)
         output = solve_given_ks(K, objective!, coldobjective!)
         isnothing(output) && continue
-        push!(innersolutions, output)
+        push!(innersolutions, output...)
       end
       innersolutions
     end
@@ -566,7 +571,9 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
   plotangles(writeangles=false)
   Plots.savefig("ICE2D_imag_$file_extension.pdf")
 
-  zs[zs .< 0] .= NaN
+  imaglolim = 1e-5
+
+  zs[zs .< imaglolim] .= NaN
   zs .= log10.(zs)
   climmax = maximum(zs)
   colorgrad = Plots.cgrad([:cyan, :black, :darkred, :red, :orange, :yellow])
@@ -583,7 +590,6 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
   xlabel = "\$\\mathrm{Frequency} \\ [\\Omega_{i}]\$"
   ylabel = "\$\\mathrm{Parallel\\ Wavenumber} \\ [\\Omega_{i} / V_A]\$"
 
-  imaglolim = 1e-5
 
   mask = shuffle(findall(@. (imag(ωs) > imaglolim)))
   @warn "Scatter plots rendering with $(length(mask)) points."
