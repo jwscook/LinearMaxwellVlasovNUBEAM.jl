@@ -28,6 +28,10 @@ abstract type AbstractNBIData end
   fmax::Float64
   speedmin::Float64
   speedrange::Float64
+  parallelspeedmin::Float64
+  parallelspeedrange::Float64
+  perpspeedmin::Float64
+  perpspeedrange::Float64
 end
 
 """
@@ -105,10 +109,17 @@ function NBIDataEnergyPitch(fname, massnumber=2;
   mass = massnumber * 1836mₑ
   v²perkeV = 1000q₀ * 2 / mass
 
-  speedmin = sqrt(minimum(edata) * v²perkeV)
-  speedrange = sqrt(maximum(edata) * v²perkeV) - speedmin
+  speedmin = sqrt(minimum(energy) * v²perkeV)
+  speedrange = sqrt(maximum(energy) * v²perkeV) - speedmin
 
-  return NBIDataEnergyPitch(massnumber, fname, fnb, pitch, sqrt.(1 .- pitch.^2), energy, fmax, speedmin, speedrange)
+  parallelspeedmin = speedmin
+  parallelspeedrange = speedrange
+  perpspeedmin = speedmin
+  perpspeedrange = speedrange
+  return NBIDataEnergyPitch(massnumber, fname, fnb, pitch, sqrt.(1 .- pitch.^2), energy, fmax,
+                            speedmin, speedrange,
+                            parallelspeedmin, parallelspeedrange,
+                            perpspeedmin, perpspeedrange)
 end
 
 pitchofpeak(n::NBIDataEnergyPitch) = n.pdata[findmax(n.fdata)[2][1]]
@@ -151,6 +162,9 @@ function NBIDataVparaVperp(fname, massnumber=2; cutoffbelowvpara=-Inf, cutoffwid
   pitchofpeak = vparadata[ind[2]] / speedofpeak
   energyofpeakkeV = 0.5 * 1836mₑ * massnumber * speedofpeak^2 / 1000q₀
 
+  @assert issorted(vparadata)
+  @assert issorted(vperpdata)
+
   return NBIDataVparaVperp(massnumber, fname, fnb, vparadata, vperpdata, fmax, pitchofpeak, energyofpeakkeV)
 end
 
@@ -162,6 +176,15 @@ speedmin(n::NBIDataEnergyPitch) = n.speedmin
 speedrange(n::NBIDataEnergyPitch) = n.speedrange
 speedmin(n::NBIDataVparaVperp) = sqrt(minimum(n.vparadata.^2 .+ n.vperpdata'.^2))
 speedrange(n::NBIDataVparaVperp) = diff(collect(extrema(sqrt.(n.vparadata.^2 .+ n.vperpdata'.^2))))[1]
+
+parallelspeedmin(n::NBIDataEnergyPitch) = n.speedmin
+parallelspeedrange(n::NBIDataEnergyPitch) = n.speedrange
+perpspeedmin(n::NBIDataEnergyPitch) = n.perpspeedmin
+perpspeedrange(n::NBIDataEnergyPitch) = n.perpspeedrange
+parallelspeedmin(n::NBIDataVparaVperp) = n.vparadata[1]
+parallelspeedrange(n::NBIDataVparaVperp) = n.vparadata[end] - n.vparadata[1]
+perpspeedmin(n::NBIDataVparaVperp) = n.vperpdata[1]
+perpspeedrange(n::NBIDataVparaVperp) = n.vperpdata[end] - n.vperpdata[1]
 
 pitchmin(n::NBIDataVparaVperp) = minimum(n.vparadata ./ sqrt.(n.vparadata.^2 .+ n.vperpdata'.^2))
 pitchmax(n::NBIDataVparaVperp) = maximum(n.vparadata ./ sqrt.(n.vparadata.^2 .+ n.vperpdata'.^2))
@@ -322,7 +345,7 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   @info "Generating differential evolution species."
 
   smax = maxspeed(nbidata)
-  maxvth = smax / 2
+  maxvth = smax / 4
 
   pmin = pitchmin(nbidata)
   plen = pitchrange(nbidata)
@@ -330,7 +353,12 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   smin = speedmin(nbidata)
   srange = speedrange(nbidata)
 
-  function speciesparams(x)
+  vzmin = parallelspeedmin(nbidata)
+  vzrange = parallelspeedrange(nbidata)
+  v⊥min = perpspeedmin(nbidata)
+  v⊥range = perpspeedrange(nbidata)
+
+  function speciesparams(x, ::NBIDataEnergyPitch)
     @assert length(x) == ncomponents_per_ringbeam
     amp = sqrt(abs(x[1]))
     p = pmin + plen * x[2] # particle pitch [pmin, pmax]
@@ -341,17 +369,26 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
     vth⊥ = maxvth * x[5]
     return (amp, vthz, uz, vth⊥, u⊥, p, v)
   end
-
-  function speciesscalar(k, x; Π0=Π)
+  function speciesparams(x, ::NBIDataVparaVperp)
+    @assert length(x) == ncomponents_per_ringbeam
+    amp = sqrt(abs(x[1]))
+    uz = vzmin + vzrange * x[2] # particle parallel velocity
+    u⊥ = v⊥min + v⊥range * x[3] # particle perpendicular velocity
+    vthz = maxvth * x[4]
+    vth⊥ = maxvth * x[5]
+    return (amp, vthz, uz, vth⊥, u⊥, nothing, nothing)
+  end
+  function speciesscalar(k, x, nbidata::AbstractNBIData; Π0=Π)
     @assert k > 0
     l = ncomponents_per_ringbeam * (k-1)
-    (amp, vthz, uz, vth⊥, u⊥, _, _) = speciesparams(x[l+1:l+ncomponents_per_ringbeam])
+    (amp, vthz, uz, vth⊥, u⊥, _, _) = speciesparams(x[l+1:l+ncomponents_per_ringbeam], nbidata)
     return SeparableVelocitySpecies(Π0 * amp, Ω, FBeam(vthz, uz), FRing(vth⊥, u⊥))
   end
-  function speciesvector(x; Π0=Π)
+
+  function speciesvector(x, nbidata::AbstractNBIData; Π0=Π)
     dfs = Vector{TSpecies}(undef, nringbeams)
     @views @inbounds for k in 1:nringbeams
-      dfs[k] = speciesscalar(k, x; Π0=Π0)
+      dfs[k] = speciesscalar(k, x, nbidata; Π0=Π0)
     end
     return dfs
   end
@@ -371,8 +408,10 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   end
 
   function objectivefit(x, nbidata::NBIDataEnergyPitch)
+    @assert size(M, 1) == length(nbidata.pdata) == length(nbi.sqrt1_p²data)
+    @assert size(M, 2) == length(nbidata.edata)
     @threads for k in 1:nringbeams
-      s = speciesscalar(k, x)
+      s = speciesscalar(k, x, nbidata)
       ρ = density(s, mass)
       Mlocal = @view M[:, :, Threads.threadid()]
       @turbo for (j, ekev) in enumerate(nbidata.edata)
@@ -390,12 +429,14 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
     return M0
   end
   function objectivefit(x, nbidata::NBIDataVparaVperp)
+    @assert size(M, 1) == length(nbidata.vparadata)
+    @assert size(M, 2) == length(nbidata.vperpdata)
     @threads for k in 1:nringbeams
-      s = speciesscalar(k, x)
+      s = speciesscalar(k, x, nbidata)
       ρ = density(s, mass)
       Mlocal = @view M[:, :, Threads.threadid()]
-      @turbo for (j, vz) in enumerate(nbidata.vparadata)
-        for (i, v⊥) in enumerate(nbidata.vperpdata)
+      @turbo for (j, v⊥) in enumerate(nbidata.vperpdata)
+        for (i, vz) in enumerate(nbidata.vparadata)
           @inbounds Mlocal[i, j] += s(vz, v⊥) * ρ
         end
       end
@@ -423,6 +464,8 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   fnorm = norm(nbidata.fdata)
 
   function objective(x)
+    @assert minimum(x) >= 0
+    @assert maximum(x) <= 1
     A = objectivefit(x, nbidata)
     rescalebyjacobians!(A, nbidata)
     maxA = maximum(A)
@@ -435,8 +478,6 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
 
   optctrl = optctrl_generator(objective, nbidata, nringbeams, bboptimizemethod, targetfitness,
                              traceinterval)
-
-  ix = rand(ncomponents_per_ringbeam * nringbeams)
 
   t = @elapsed res = if performoptimisation
     initialguess = if !isnothing(initialguessfilepath)
@@ -460,10 +501,10 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   @info "Fitness = $fitness"
 
   performoptimisation && @info "Fitness achieved is $fitness in $(t / 3600) hours."
-  dfs = speciesvector(best_candidate(res))
+  dfs = speciesvector(best_candidate(res), nbidata)
 
   nprenorm = sum(density(i, mass) for i in dfs)
-  nbi_species = speciesvector(xbest, Π0=Π * sqrt(numberdensity / nprenorm))
+  nbi_species = speciesvector(xbest, nbidata, Π0=Π * sqrt(numberdensity / nprenorm))
   nnbi = sum(density(i, mass) for i in nbi_species)
   @assert nnbi ≈ numberdensity
 
