@@ -110,7 +110,7 @@ const nbidata = try
   _nbidata
 catch err
   _nbidata = NBI.NBIDataVparaVperp(parsedargs["nubeamfilename"], nbimassinprotons;
-    cutoffbelowvpara=0.0, cutoffwidthvpara=1e6)
+    cutoffbelowvpara=-Inf, cutoffwidthvpara=1.0)
   @info "Creating an NBIDataVparaVperp from the data"
   _nbidata
 end
@@ -375,7 +375,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
   function findsolutions(plasma, coldplasma)
     ngridpoints = 2^9
-    kzs = range(-1.0, stop=1.0, length=ngridpoints) * k0
+    kzs = range(-5.0, stop=5.0, length=ngridpoints) * k0
     k⊥s = range(0.0, stop=5.0, length=ngridpoints) * k0
 
     # change order for better distributed scheduling
