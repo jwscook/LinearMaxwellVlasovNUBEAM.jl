@@ -116,6 +116,10 @@ function NBIDataEnergyPitch(fname, massnumber=2;
   parallelspeedrange = speedrange
   perpspeedmin = speedmin
   perpspeedrange = speedrange
+
+  @assert all(isfinite, fnb)
+  @assert all(isfinite, pitch)
+  @assert all(isfinite, energy)
   return NBIDataEnergyPitch(massnumber, fname, fnb, pitch, sqrt.(1 .- pitch.^2), energy, fmax,
                             speedmin, speedrange,
                             parallelspeedmin, parallelspeedrange,
@@ -141,22 +145,37 @@ pitchrange(n::NBIDataEnergyPitch) = maximum(n.pdata) - pitchmin(n)
   energyofpeakkev::Float64
 end
 
-function NBIDataVparaVperp(fname, massnumber=2; cutoffbelowvpara=-Inf, cutoffwidthvpara=1e100)
+function NBIDataVparaVperp(fname, massnumber=2; cutoffbelowvpara=-Inf, cutoffwidthvpara=1e100,
+    speedcutoff=0.0)
 
   fnb = transpose(h5read(fname, "C"))
   vparadata = h5read(fname, "VPAR")[1, :][:]
   vperpdata = h5read(fname, "VPERP")[:, 1][:]
+  @assert all(isfinite, fnb)
+  @assert all(isfinite, vparadata)
+  @assert all(isfinite, vperpdata)
 
   @assert size(fnb, 1) == length(vparadata)
   @assert size(fnb, 2) == length(vperpdata)
 
   cutoffmask = (0.5 .+ 0.5 .* erf.((vparadata .- cutoffbelowvpara) ./ cutoffwidthvpara))
+  @assert 0 <= minimum(cutoffmask) <= 1
+  @assert 0 <= maximum(cutoffmask) <= 1
   @assert minimum(cutoffmask) >= 0
   @assert maximum(cutoffmask) <= 1
   fnb .*= cutoffmask
+  @assert all(isfinite, fnb)
+
+  maxspeed = maximum(sqrt.(vperpdata'.^2 .+ vparadata.^2)[:])
+  @assert maxspeed > speedcutoff "maxspeed = $maxspeed, speedcutoff = $speedcutoff"
+  cutoffmask = sqrt.(vperpdata'.^2 .+ vparadata.^2) .>= speedcutoff
+  fnb .*= cutoffmask
+  @assert all(isfinite, fnb)
 
   fmax, ind = findmax(fnb)
+  @assert fmax > 0
   fnb ./= fmax
+  @assert all(isfinite, fnb)
 
   speedofpeak = sqrt(vparadata[ind[2]]^2 + vperpdata[ind[1]]^2)
   pitchofpeak = vparadata[ind[2]] / speedofpeak
@@ -165,6 +184,9 @@ function NBIDataVparaVperp(fname, massnumber=2; cutoffbelowvpara=-Inf, cutoffwid
   @assert issorted(vparadata)
   @assert issorted(vperpdata)
 
+  @assert all(isfinite, fnb)
+  @assert all(isfinite, vparadata)
+  @assert all(isfinite, vperpdata)
   return NBIDataVparaVperp(massnumber, fname, fnb, vparadata, vperpdata, fmax, pitchofpeak, energyofpeakkeV)
 end
 
@@ -229,7 +251,7 @@ function NBIInterpVelocitySpace(nbidata::NBIDataEnergyPitch)
     end
   end
 
-  # here is the place to pad with zeros to get lienar interpolation at edges
+  # here is the place to pad with zeros to get linear interpolation at edges
   interp = linear_interpolation((nbidata.pdata, nbidata.edata), fdata_v)
 
   return NBIInterpVelocitySpace(interp, nbidata,
@@ -336,7 +358,7 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
     timelimithours=12, targetfitness=0.01, traceinterval=600.0,
     performoptimisation=true, initialguessfilepath=nothing)::Vector{TSpecies}
 
-  cachehash = foldr(hash, (Π, Ω, numberdensity, nringbeams, bboptimizemethod);
+  cachehash = foldr(hash, (nringbeams, bboptimizemethod);
                     init=hash(nbidata))
 
   mass = nbidata.massnumber * 1836mₑ
@@ -382,6 +404,7 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
     @assert k > 0
     l = ncomponents_per_ringbeam * (k-1)
     (amp, vthz, uz, vth⊥, u⊥, _, _) = speciesparams(x[l+1:l+ncomponents_per_ringbeam], nbidata)
+    #@show Π0 * amp, Ω, vthz, uz, vth⊥, u⊥
     return SeparableVelocitySpecies(Π0 * amp, Ω, FBeam(vthz, uz), FRing(vth⊥, u⊥))
   end
 
@@ -462,6 +485,7 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   rescalebyjacobians!(A, nbidata::NBIDataVparaVperp) = A
 
   fnorm = norm(nbidata.fdata)
+  @assert isfinite(fnorm)
 
   function objective(x)
     @assert minimum(x) >= 0

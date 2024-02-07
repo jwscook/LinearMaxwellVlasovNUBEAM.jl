@@ -1,4 +1,4 @@
-using Distributed, Dates, ArgParse
+using Distributed, Dates, ArgParse, HDF5
 using Plots, Random, ImageFiltering, Statistics
 using Dierckx, Contour, JLD2, DelimitedFiles, JLSO
 using Pkg
@@ -20,6 +20,10 @@ argsettings = ArgParseSettings()
         help = "The electron number density, n0 [m^-3]"
         arg_type = Float64
         default = 4.71e19
+    "--thermalprotonnumberdensity", "--np"
+        help = "The proton number density, n0 [m^-3]"
+        arg_type = Float64
+        default = 4.71e19
     "--nbidensityfraction", "--nb_ne"
         help = "The fraction of nbi wrt electrons"
         arg_type = Float64
@@ -36,10 +40,6 @@ argsettings = ArgParseSettings()
         help = "The background dueteron temperature in eV"
         arg_type = Float64
         default = 1.0e3
-    "--ratiothermalprotontoelectrons", "--np_ne"
-        help = "The ratio of number densities of thermal H to electrons, n_p / n_e"
-        arg_type = Float64
-        default = 0.0
     "--nbimassinprotons", "--mn"
         help = "The nbi mass number in units of proton mass"
         arg_type = Int
@@ -76,6 +76,14 @@ argsettings = ArgParseSettings()
         help = "The path to the results .jlso file to use for the starting state for optimisation"
         arg_type = Union{Nothing,String}
         default = nothing
+    "--Zeff"
+        help = "The Zeff if known"
+        arg_type = Float64
+        default = 1.0
+    "--otheralfvenspeed"
+        help = "The Alfven speed if known from other sources"
+        arg_type = Float64
+        default = -1.0
 end
 
 include("NBI.jl")
@@ -100,17 +108,18 @@ const n0 = parsedargs["electrondensity"]
 const B0 = parsedargs["magneticfield"]
 
 @info "Reading nbi data"
-
-const nbidata = try
-  _nbidata = NBI.NBIDataEnergyPitch(parsedargs["nubeamfilename"], nbimassinprotons;
+const nubeamfilename = parsedargs["nubeamfilename"]
+const nubeamfilehandle = h5open(nubeamfilename)
+const nbidata = if haskey(nubeamfilehandle, "fnb")
+  _nbidata = NBI.NBIDataEnergyPitch(nubeamfilename, nbimassinprotons;
     pitchlowcutoff=-1.0, pitchhighcutoff=1.0,
     energykevlowcutoff=0.0, energykevhighcutoff=Inf,
     padpitch_neumann_bc=true)
   @info "Creating an NBIDataEnergyPitch from the data"
   _nbidata
-catch err
-  _nbidata = NBI.NBIDataVparaVperp(parsedargs["nubeamfilename"], nbimassinprotons;
-    cutoffbelowvpara=-Inf, cutoffwidthvpara=1.0)
+elseif haskey(nubeamfilehandle, "C") # "C" is not the best name and this is not the best way of doing it
+  _nbidata = NBI.NBIDataVparaVperp(nubeamfilename, nbimassinprotons;
+    cutoffbelowvpara=0, cutoffwidthvpara=1.0, speedcutoff=2.1e6)
   @info "Creating an NBIDataVparaVperp from the data"
   _nbidata
 end
@@ -122,17 +131,28 @@ const niters = parsedargs["niters"]
 const teev = parsedargs["electrontemperatureev"]
 const tpev = parsedargs["backgroundprotontemperatureev"]
 const tdev = parsedargs["backgrounddeuterontemperatureev"]
-const np_ne = parsedargs["ratiothermalprotontoelectrons"]
+const np = parsedargs["thermalprotonnumberdensity"]
 const syntheticspectrumfreqmax = parsedargs["syntheticspectrumfreqmax"]
 const syntheticspectrumnbins = parsedargs["syntheticspectrumnbins"]
+const Zeff = parsedargs["Zeff"]# * ξfraction
+const otheralfvenspeed = parsedargs["otheralfvenspeed"]# * ξfraction
 
 const ξ = parsedargs["nbidensityfraction"]# * ξfraction
-const md = 2 * 1836 * LinearMaxwellVlasov.mₑ
+const mp = 1836 * LinearMaxwellVlasov.mₑ
+const md = 2 * mp
 const mn = nbimassinprotons * 1836 * LinearMaxwellVlasov.mₑ
+const mc = 12 * mp
 const nn = n0 * ξ # number density of nbi
-const np = np_ne * n0 # number density of background thermal H
-const nd = n0 - nn - np # number density of background thermal D
-@assert n0 ≈ nn + nd + np
+const Zc = 6 # remaining impurity
+const nd = 0.0
+#const nc = (Zeff * n0 - np - nn - nd) / Zc^2 # number density of the impurity
+const nc = (n0 - nn - nd - np) / Zc
+const Zeffcalculated = (np + nn + nd + nc * Zc^2) / n0
+@assert n0 ≈ Zc * nc + nn + nd + np
+@info "Zeffcalculated is $Zeffcalculated, and ratio vs that given is $(Zeffcalculated / Zeff)"
+
+const Va = sqrt(B0^2/LinearMaxwellVlasov.μ₀/(nd * md + np * mp + nn * mn + nc * mc))
+@info "Va calculated $Va, and ratio vs that given is $(Va / otheralfvenspeed)"
 
 const Ωn = cyclotronfrequency(B0, mn, 1)
 const Πn = plasmafrequency(nn, mn, 1)
@@ -144,7 +164,6 @@ const Πn = plasmafrequency(nn, mn, 1)
 #const _nbi_coupled = NBI.couplednbispecies(nbi_interp, Πn, Ωn)
 
 const initialguessfilepath = parsedargs["initialguessfilepath"]
-
 @info "Calculating nbi fit species with $nringbeams sub-populations"
 for _ in 1:niters # iterate and saves result after each
   NBI.differentialevolutionfitspecies(nbidata, Πn, Ωn, nn,
@@ -162,7 +181,7 @@ const _nbi_ringbeamsfit = NBI.differentialevolutionfitspecies(nbidata, Πn, Ωn,
 const peakenergykev = NBI.energyofpeakkev(nbidata)
 const pitchofmax = NBI.pitchofpeak(nbidata)
 
-const nprocsadded = div(Sys.CPU_THREADS, 2)
+const nprocsadded = 6#Threads.nthreads()#div(Sys.CPU_THREADS, 2)
 addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
 @everywhere using ProgressMeter # for some reason must be up here on its own
@@ -191,6 +210,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   nn = Float64(@fetchfrom 1 nn)
   nd = Float64(@fetchfrom 1 nd)
   np = Float64(@fetchfrom 1 np)
+  nc = Float64(@fetchfrom 1 nc)
   mn = Float64(@fetchfrom 1 mn)
   B0 = Float64(@fetchfrom 1 B0)
   Πn = Float64(@fetchfrom 1 Πn)
@@ -198,6 +218,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   teev = Float64(@fetchfrom 1 teev)
   tpev = Float64(@fetchfrom 1 tpev)
   tdev = Float64(@fetchfrom 1 tdev)
+  otheralfvenspeed = Float64(@fetchfrom 1 otheralfvenspeed)
 
   injectionenergykev = Float64(@fetchfrom 1 peakenergykev)
   peakpitch = Float64(@fetchfrom 1 pitchofmax)
@@ -211,17 +232,24 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
   name_extension = String(@fetchfrom 1 name_extension)
 
-  @assert n0 ≈ nn + nd + np
-  Va = sqrt(B0^2/LinearMaxwellVlasov.μ₀/(nd * md + np * mp + nn * mn))
+#  @assert n0 ≈ nn + nd + np
+
+  Zc = 6
+  mc = 12*mp # Carbon
+
+  Va = sqrt(B0^2/LinearMaxwellVlasov.μ₀/(nd * md + np * mp + nn * mn + nc * mc))
+  @show otheralfvenspeed, Va / otheralfvenspeed
 
   Ωe = cyclotronfrequency(B0, mₑ, -1)
   Ωd = cyclotronfrequency(B0, md, 1)
   #Ωn = cyclotronfrequency(B0, mn, 1)
   Ωp = cyclotronfrequency(B0, mp, 1)
+  Ωc = cyclotronfrequency(B0, mc, Zc)
   Πe = plasmafrequency(n0, mₑ, -1)
   Πd = plasmafrequency(nd, md, 1)
+  Πc = plasmafrequency(nc, mc, Zc)
   Πn = plasmafrequency(nn, mn, 1)
-  Πh = plasmafrequency(np, mp, 1)
+  Πp = plasmafrequency(np, mp, 1)
   vthe = thermalspeed(teev, mₑ)
   vthd = thermalspeed(tdev, md)
   vthp = thermalspeed(tpev, mp)
@@ -239,7 +267,9 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   deuteron_warm = WarmSpecies(Πd, Ωd, vthd)
   deuteron_maxw = MaxwellianSpecies(Πd, Ωd, vthd, vthd)
 
-  proton_maxw = MaxwellianSpecies(Πh, Ωp, vthp, vthp)
+  proton_maxw = MaxwellianSpecies(Πp, Ωp, vthp, vthp)
+
+  carbon_cold = ColdSpecies(Πc, Ωc) # to make Zeff
 
   nbi_cold = ColdSpecies(Πn, Ωn)
   nbi_ringbeam = SeparableVelocitySpecies(Πn, Ωn,
@@ -265,24 +295,32 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 #  nbi_coupled = CoupledVelocitySpecies(Πn, Ωn,
 #    FBeam(vinj * vthfracinj, vinj * peakpitch),
 #    FRing(vinj * vthfracinj, vinj * sqrt(1-peakpitch^2)))
-  commonspecies = [electron_maxw]
+  commonspecies = Any[electron_maxw,]
   !iszero(Πd) && push!(commonspecies, deuteron_maxw)
-  !iszero(Πh) && push!(commonspecies, proton_maxw)
+  !iszero(Πp) && push!(commonspecies, proton_maxw)
+  !iszero(Πc) && push!(commonspecies, carbon_cold)
+  nn_calculated = sum(s->s.Π^2 / q₀^2 * mn * LinearMaxwellVlasov.ϵ₀ , nbi_ringbeamsfit)
+  @info "Beam density is $nn_calculated, and should be $nn"
+
 
   Smms = Plasma([commonspecies..., nbi_ringbeamsfit...])
   Smmc = Plasma([commonspecies..., nbi_cold])
 # Smmr = Plasma([commonspecies..., nbi_ringbeam])
 # Smmo = Plasma([commonspecies..., nbi_coupled])
 # Smmt = Plasma([commonspecies..., nbi_tanh])
+  @assert LinearMaxwellVlasov.isneutral(Smmc)
+  @assert LinearMaxwellVlasov.isneutral(Smms)
 
   w0 = abs(Ωd)
   k0 = w0 / abs(Va)
 
-  grmax = abs(Ωn) * 0.5
+  grmax = abs(Ωn) * 0.75
   grmin = -grmax / 4
   function bounds(ω0)
-    lb = @SArray [ω0 * 0.4, grmin]
-    ub = @SArray [ω0 * 1.3, grmax]
+    lb = @SArray [max(0.0, min(ω0 - Ωd, ω0 * 0.4)), grmin]
+    ub = @SArray [max(ω0 + Ωd, ω0 * 1.3), grmax]
+    #lb = @SArray [ω0 * 0.4, grmin]
+    #ub = @SArray [ω0 * 1.3, grmax]
     return (lb, ub)
   end
 
@@ -346,7 +384,8 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
       #    WindingNelderMead.centre(simplex)
       #  end
       #  unitobjective!(c, minimiser)
-      #  return c
+      #  push!(solsvector, c)
+#     #   return c
       #end
 
       nlsolution = nlsolve(x->reim(boundedunitobjective!(x)),
