@@ -303,7 +303,13 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   @info "Beam density is $nn_calculated, and should be $nn"
 
 
+#  fit1 = nbi_ringbeamsfit[1]
+#  nbi_ringbeamdelta = SeparableVelocitySpecies(fit1.Π, fit1.Ω,
+#                                          FParallelDiracDelta(fit1.Fz.vd),
+#                                          FPerpendicularDiracDelta(fit1.F⊥.vd))
+
   Smms = Plasma([commonspecies..., nbi_ringbeamsfit...])
+#  Smms = Plasma([commonspecies..., nbi_ringbeamdelta])
   Smmc = Plasma([commonspecies..., nbi_cold])
 # Smmr = Plasma([commonspecies..., nbi_ringbeam])
 # Smmo = Plasma([commonspecies..., nbi_coupled])
@@ -314,11 +320,11 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   w0 = abs(Ωd)
   k0 = w0 / abs(Va)
 
-  grmax = abs(Ωn) * 0.75
-  grmin = -grmax / 4
+  grmax = abs(Ωn) * 0.02
+  grmin = -grmax * 2/3
   function bounds(ω0)
-    lb = @SArray [max(0.0, min(ω0 - Ωd, ω0 * 0.4)), grmin]
-    ub = @SArray [max(ω0 + Ωd, ω0 * 1.3), grmax]
+    lb = @SArray [max(0.0, min(ω0 - Ωd/2, ω0 * 0.6)), grmin]
+    ub = @SArray [max(ω0 + Ωd/2, ω0 * 1.5), grmax]
     #lb = @SArray [ω0 * 0.4, grmin]
     #ub = @SArray [ω0 * 1.3, grmax]
     return (lb, ub)
@@ -355,7 +361,10 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
     config = Configuration(K, options)
 
-    ics = ((@SArray [ω0*0.8, grmax*0.8]),
+    ics = ((@SArray [ω0*1.0, grmax*0.9]),
+           (@SArray [ω0*0.9, grmax*0.8]),
+           (@SArray [ω0*0.8, grmax*0.5]),
+           (@SArray [ω0*0.7, grmax*0.2]),
            (@SArray [ω0*1.1, grmax*0.8]),
            (@SArray [ω0*0.95, grmax*0.4]),
            (@SArray [ω0*0.95, grmax*0.2]),
@@ -413,7 +422,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
 
   function findsolutions(plasma, coldplasma)
-    ngridpoints = 2^9
+    ngridpoints = 2^10
     kzs = range(-5.0, stop=5.0, length=ngridpoints) * k0
     k⊥s = range(0.0, stop=5.0, length=ngridpoints) * k0
 
