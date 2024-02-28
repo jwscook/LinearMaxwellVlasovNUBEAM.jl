@@ -181,7 +181,7 @@ const _nbi_ringbeamsfit = NBI.differentialevolutionfitspecies(nbidata, Πn, Ωn,
 const peakenergykev = NBI.energyofpeakkev(nbidata)
 const pitchofmax = NBI.pitchofpeak(nbidata)
 
-const nprocsadded = 6#Threads.nthreads()#div(Sys.CPU_THREADS, 2)
+const nprocsadded = Threads.nthreads()#div(Sys.CPU_THREADS, 2)
 addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
 @everywhere using ProgressMeter # for some reason must be up here on its own

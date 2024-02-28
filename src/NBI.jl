@@ -509,6 +509,13 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
       loaded = JLSO.load(initialguessfilepath)
       initialguessres = loaded[:results]
       best_candidate(initialguessres)
+    else
+      ig = rand(ncomponents_per_ringbeam * nringbeams)
+      ig[2:5:end] .*= 0.2
+      ig[2:5:end] .+= 0.6
+      ig[3:5:end] .*= 0.2
+      ig[3:5:end] .+= 0.6
+      ig
     end
     bboptimize(optctrl, initialguess;
       TraceMode = :compact,
