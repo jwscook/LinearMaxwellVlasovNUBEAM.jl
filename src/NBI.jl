@@ -1,11 +1,12 @@
 module NBI
-
+using InteractiveUtils
 using SpecialFunctions, LinearAlgebra, Random, AutoHashEquals
 using BlackBoxOptim, Plots
 using LoopVectorization, Base.Threads, Polyester
 using LinearMaxwellVlasov
 using JLSO, HDF5
 using Dierckx, Interpolations
+using StaticArrays
 
 Random.seed!(0)
 
@@ -327,7 +328,7 @@ function optctrl_generator(objective::F, nbidata::AbstractNBIData, nringbeams::I
 end
 
 """
-    differentialevolutionfitspecies(nbidata::AbstractNBIData,Π,Ω,numberdensity;nringbeams=100,bboptimizemethod=:adaptive_de_rand_1_bin,timelimithours=12,targetfitness=0.01,traceinterval=600.0,performoptimisation=true)::Vector{TSpecies}
+    differentialevolutionfitspecies(nbidata::AbstractNBIData,Π,Ω,numberdensity;nringbeams=100,bboptimizemethod=:adaptive_de_rand_1_bin,timelimithours=1,targetfitness=0.01,traceinterval=600.0,performoptimisation=true)::Vector{TSpecies}
 
 Return a vector of RingBeam Species that best fit the data given the parameters
 
@@ -340,7 +341,7 @@ Return a vector of RingBeam Species that best fit the data given the parameters
 Optional args:
 - `nringbeams=100`: number of ring beams
 - `bboptimizemethod=:adaptive_de_rand_1_bin`: used internally by BlackBoxOptim
-- `timelimithours=12`:
+- `timelimithours=1`:
 - `targetfitness=0.01`:
 - `traceinterval=600.0`: in seconds
 - `performoptimisation=true::Vector{TSpecies}`: when false, this reads data from file and returns it
@@ -355,7 +356,7 @@ Optional args:
 """
 function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numberdensity;
     nringbeams=100, bboptimizemethod=:adaptive_de_rand_1_bin,
-    timelimithours=12, targetfitness=0.01, traceinterval=600.0,
+    timelimithours=1, targetfitness=0.01, traceinterval=600.0,
     performoptimisation=true, initialguessfilepath=nothing)::Vector{TSpecies}
 
   cachehash = foldr(hash, (nringbeams, bboptimizemethod);
@@ -568,7 +569,7 @@ end
 density(Π::Real, mass) = Π^2 / q₀^2 * mass * LinearMaxwellVlasov.ϵ₀
 density(s, mass) = density(s.Π, mass)
 
-function couplednbispecies(nbiinterp::NBIInterpVelocitySpace, Π, Ω)
+function coupledinterpnbispecies(nbiinterp::NBIInterpVelocitySpace, Π, Ω)
   vinj = speedofpeak(nbiinterp)
   pitch = pitchofpeak(nbiinterp)
 
@@ -579,6 +580,161 @@ function couplednbispecies(nbiinterp::NBIInterpVelocitySpace, Π, Ω)
 
   species = CoupledVelocitySpecies(Π, Ω, fvz⊥)
   return species
+end
+#
+#function defaultcoupledfit(vz, v⊥, v0, param)
+#  v = sqrt(vz^2 + v⊥^2)
+#  p = vz / v
+#  output = param[1] * # height
+#    #exp(4v/v0/param[2]) * # slope up
+#    (v/v0)^(20param[2]) * # slope up
+#    exp(- (p - param[3])^2 / (0.5param[4])^2) * # pitch shape
+#    (0.5 + 0.5*erf((v0 * 2param[5] - v)/v0/0.1param[6])) # slope back down
+#  return output
+#end
+
+function defaultcoupledfit(vz, v⊥, v0, param)
+  v = sqrt(vz^2 + v⊥^2)
+  p = vz / v
+  t = (atan(vz / v⊥) * 2/pi + 1) / 2
+  output = param[1] * # height
+    #exp(4v/v0/param[2]) * # slope up
+    (v/v0)^(20param[2]) * # slope up
+    exp(- (p - param[3])^2 / (0.5param[4])^2) * # pitch shape
+    (0.5 + 0.5*erf((v0 * 2param[5] - v)/v0/0.1param[6])) # slope back down
+  return output
+end
+
+
+function differentialevolutionfitcoupledspecies(
+    nbidata::NBIDataVparaVperp, Π, Ω, numberdensity;
+    bboptimizemethod=:adaptive_de_rand_1_bin,
+    timelimithours=1, targetfitness=0.01, traceinterval=600.0,
+    performoptimisation=true,
+    fitfvz⊥::F=defaultcoupledfit,
+    searchrange=[i == 3 ? (0.0, 1.0) : (0.0, 1.0) for i in 1:6]
+   ) where F
+
+  cachehash = foldr(hash, (bboptimizemethod, fitfvz⊥);
+                    init=hash(nbidata))
+
+  mass = nbidata.massnumber * 1836mₑ
+  v²perkeV = 1000q₀ * 2 / mass
+
+  @info "Generating differential evolution species."
+
+  smax = maxspeed(nbidata)
+  maxvth = smax / 4
+
+  pmin = pitchmin(nbidata)
+  plen = pitchrange(nbidata)
+
+  smin = speedmin(nbidata)
+  srange = speedrange(nbidata)
+
+  vzmin = parallelspeedmin(nbidata)
+  vzrange = parallelspeedrange(nbidata)
+  v⊥min = perpspeedmin(nbidata)
+  v⊥range = perpspeedrange(nbidata)
+
+  M0 = zeros(Float64, size(nbidata))
+  @assert size(M0, 1) == length(nbidata.vparadata)
+  @assert size(M0, 2) == length(nbidata.vperpdata)
+
+  function objectivefit(x, nbidata::NBIDataVparaVperp)
+    s(vz, v⊥) = fitfvz⊥(vz, v⊥, smax, x)
+    fill!(M0, 0.0)
+    @turbo for (j, v⊥) in enumerate(nbidata.vperpdata)
+      for (i, vz) in enumerate(nbidata.vparadata)
+        @inbounds M0[i, j] += s(vz, v⊥)
+      end
+    end
+    return M0
+  end
+
+  fnorm = norm(nbidata.fdata)
+  @assert isfinite(fnorm)
+
+  function objective(x)
+    @assert 0 <= x[3] <= 1
+    #@assert minimum(x) >= 0
+    #@assert maximum(x) <= 1
+    A = objectivefit(x, nbidata)
+    #@show norm(A), norm(A .- nbidata.fdata)
+    maxA = maximum(A)
+    @turbo for i in eachindex(A, nbidata.fdata)
+      A[i] /= maxA
+      A[i] -= nbidata.fdata[i]
+    end
+    return norm(A) / fnorm
+  end
+
+  optctrl = bbsetup(objective;
+     SearchRange = searchrange,
+     NumDimensions = length(searchrange),
+     Method = bboptimizemethod,
+     TargetFitness = targetfitness,
+     TraceInterval = traceinterval)
+
+  t = @elapsed res = if performoptimisation
+    bboptimize(optctrl;
+      TraceMode = :compact,
+      MaxTime = 3600 * timelimithours,
+      MaxSteps = 1_000_000,
+      MaxFuncEvals = timelimithours == 0 ? 0 : Int(maxintfloat()))
+  else
+    loaded = JLSO.load("BlackBoxOptim_results_$(cachehash).jlso")
+    loaded[:results]
+  end
+
+  xbest = best_candidate(res)
+  fitness = best_fitness(res)
+  @info "Fitness = $fitness"
+
+  performoptimisation && @info "Fitness achieved is $fitness in $(t / 3600) hours."
+
+  params = @MArray zeros(6) # make it type stable with this
+  params .= best_candidate(res)
+  @show smax, params
+  fvbest(vz, v⊥) = fitfvz⊥(vz, v⊥, smax, params)
+  
+  fvz⊥ = FCoupledVelocityNumerical(fvbest, (smax, smax), smax/2, 1.2smax, autonormalise=true)
+
+  @code_warntype fvz⊥(1e4, 1e4)
+
+  nbi_species = CoupledVelocitySpecies(Π, Ω, fvz⊥)
+
+  JLSO.save("BlackBoxOptim_results_$(cachehash).jlso",
+    :optctrl => optctrl, :results => res, :xbest => xbest, :nbi_species => nbi_species, :fitness => fitness)
+
+  JLSO.save("BlackBoxOptim_nbi_species_$(cachehash).jlso",
+    :nbi_species => nbi_species,
+    :maxspeed => smax)
+
+  if typeof(nbidata) <: NBIDataEnergyPitch
+  JLSO.save("BlackBoxOptim_plotdata_$(cachehash).jlso",
+    :nbi_species => nbi_species,
+    :maxspeed => smax,
+    :edata => nbidata.edata,
+    :pdata => nbidata.pdata,
+    :fdata => nbidata.fdata,
+    :scaledfit => deepcopy(objectivefit(xbest, nbidata)),
+    :fit => deepcopy(objectivefit(xbest, nbidata)))
+  elseif typeof(nbidata) <: NBIDataVparaVperp
+  JLSO.save("BlackBoxOptim_plotdata_$(cachehash).jlso",
+    :nbi_species => nbi_species,
+    :maxspeed => smax,
+    :vparadata => nbidata.vparadata,
+    :vperpdata => nbidata.vperpdata,
+    :fdata => nbidata.fdata,
+    :scaledfit => deepcopy(objectivefit(xbest, nbidata)),
+    :fit => deepcopy(objectivefit(xbest, nbidata)))
+  end
+
+  JLSO.save(cacheic_fname((nbidata, bboptimizemethod, targetfitness, traceinterval)),
+            :optctrl => optctrl, :xbest => xbest)
+
+  return nbi_species
 end
 
 end

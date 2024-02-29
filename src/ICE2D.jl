@@ -157,13 +157,18 @@ const Va = sqrt(B0^2/LinearMaxwellVlasov.μ₀/(nd * md + np * mp + nn * mn + nc
 const Ωn = cyclotronfrequency(B0, mn, 1)
 const Πn = plasmafrequency(nn, mn, 1)
 
-#@info "Creating nbi interpolator"
+##@info "Creating nbi interpolator"
 #const nbi_interp = NBI.NBIInterpVelocitySpace(nbidata)
-
-#@info "Creating nbi coupled species"
-#const _nbi_coupled = NBI.couplednbispecies(nbi_interp, Πn, Ωn)
+#
+##@info "Creating nbi coupled species"
+#const _nbi_coupled = NBI.coupledinterpnbispecies(nbi_interp, Πn, Ωn)
 
 const initialguessfilepath = parsedargs["initialguessfilepath"]
+const _nbi_coupledfit = NBI.differentialevolutionfitcoupledspecies(
+    nbidata, Πn, Ωn, nn,
+    timelimithours=1/60, targetfitness=0.01
+   )
+
 @info "Calculating nbi fit species with $nringbeams sub-populations"
 for _ in 1:niters # iterate and saves result after each
   NBI.differentialevolutionfitspecies(nbidata, Πn, Ωn, nn,
@@ -181,7 +186,7 @@ const _nbi_ringbeamsfit = NBI.differentialevolutionfitspecies(nbidata, Πn, Ωn,
 const peakenergykev = NBI.energyofpeakkev(nbidata)
 const pitchofmax = NBI.pitchofpeak(nbidata)
 
-const nprocsadded = 6#Threads.nthreads()#div(Sys.CPU_THREADS, 2)
+const nprocsadded = div(Sys.CPU_THREADS, 2)
 addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
 @everywhere using ProgressMeter # for some reason must be up here on its own
@@ -299,8 +304,8 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   !iszero(Πd) && push!(commonspecies, deuteron_maxw)
   !iszero(Πp) && push!(commonspecies, proton_maxw)
   !iszero(Πc) && push!(commonspecies, carbon_cold)
-  nn_calculated = sum(s->s.Π^2 / q₀^2 * mn * LinearMaxwellVlasov.ϵ₀ , nbi_ringbeamsfit)
-  @info "Beam density is $nn_calculated, and should be $nn"
+#  nn_calculated = sum(s->s.Π^2 / q₀^2 * mn * LinearMaxwellVlasov.ϵ₀ , nbi_ringbeamsfit)
+#  @info "Beam density is $nn_calculated, and should be $nn"
 
 
 #  fit1 = nbi_ringbeamsfit[1]
@@ -308,6 +313,10 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 #                                          FParallelDiracDelta(fit1.Fz.vd),
 #                                          FPerpendicularDiracDelta(fit1.F⊥.vd))
 
+  nbi_coupledfit = @fetchfrom 1 _nbi_coupledfit
+  #@code_warntype nbi_coupledfit((Va, Va))
+  #@code_warntype nbi_coupledfit(Va, Va)
+  Smmf = Plasma([commonspecies..., nbi_coupledfit])
   Smms = Plasma([commonspecies..., nbi_ringbeamsfit...])
 #  Smms = Plasma([commonspecies..., nbi_ringbeamdelta])
   Smmc = Plasma([commonspecies..., nbi_cold])
@@ -316,22 +325,23 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 # Smmt = Plasma([commonspecies..., nbi_tanh])
   @assert LinearMaxwellVlasov.isneutral(Smmc)
   @assert LinearMaxwellVlasov.isneutral(Smms)
+  @assert LinearMaxwellVlasov.isneutral(Smmf)
 
   w0 = abs(Ωd)
   k0 = w0 / abs(Va)
 
-  grmax = abs(Ωn) * 0.02
+  grmax = abs(Ωn) * 0.3
   grmin = -grmax * 2/3
   function bounds(ω0)
-    lb = @SArray [max(0.0, min(ω0 - Ωd/2, ω0 * 0.6)), grmin]
-    ub = @SArray [max(ω0 + Ωd/2, ω0 * 1.5), grmax]
-    #lb = @SArray [ω0 * 0.4, grmin]
-    #ub = @SArray [ω0 * 1.3, grmax]
+    #lb = @SArray [max(0.0, min(ω0 - Ωd/2, ω0 * 0.6)), grmin]
+    #ub = @SArray [max(ω0 + Ωd/2, ω0 * 1.5), grmax]
+    lb = @SArray [ω0 * 0.4, grmin]
+    ub = @SArray [ω0 * 1.3, grmax]
     return (lb, ub)
   end
 
   options = Options(memoiseparallel=false, memoiseperpendicular=true,
-    quadrature_rtol=1e-10, summation_rtol=1e-8)
+    quadrature_rtol=1e-8, summation_rtol=1e-6)
 
   function solve_given_ks(K, objective!, coldobjective!)
     ωfA0 = fastzerobetamagnetoacousticfrequency(Va, K, Ωd)
@@ -371,8 +381,11 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
            (@SArray [ω0*0.95, grmax*0.1]))
 
     function unitobjective!(c, x::T) where {T}
-      return objective!(c,
+      @assert all(isfinite, x)
+      output = objective!(c,
         T([x[i] * (ub[i] - lb[i]) + lb[i] for i in eachindex(x)]))
+      #@show x, output
+      return output
     end
     unitobjectivex! = x -> unitobjective!(config, x)
     boundedunitobjective! = boundify(unitobjectivex!)
@@ -380,31 +393,35 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
     solsvector = []
     @elapsed for ic ∈ ics
       @assert all(i->lb[i] <= ic[i] <= ub[i], eachindex(ic))
-      #neldermeadsol = WindingNelderMead.optimise(
-      #  boundedunitobjective!, SArray((ic .- lb) ./ (ub .- lb)),
-      #  1.0e-2 * (@SArray ones(2)); stopval=1e-15, timelimit=3600,
-      #  maxiters=150, ftol_rel=0, ftol_abs=0, xtol_rel=0, xtol_abs=xtol_abs)
-      #simplex, windingnumber, returncode, numiterations = neldermeadsol
-      #if (windingnumber == 1 && returncode == :XTOL_REACHED)# || returncode == :STOPVAL_REACHED
-      #  c = deepcopy(config)
-      #  minimiser = if windingnumber == 0
-      #    WindingNelderMead.position(WindingNelderMead.bestvertex(simplex))
-      #  else
-      #    WindingNelderMead.centre(simplex)
-      #  end
-      #  unitobjective!(c, minimiser)
-      #  push!(solsvector, c)
-#     #   return c
-      #end
-
-      nlsolution = nlsolve(x->reim(boundedunitobjective!(x)),
-                           MArray((ic .- lb) ./ (ub .- lb)), xtol=1e-8, factor=0.01)
-      if nlsolution.x_converged || nlsolution.f_converged
+      neldermeadsol = WindingNelderMead.optimise(
+        boundedunitobjective!, SArray((ic .- lb) ./ (ub .- lb)),
+        1.0e-2 * (@SArray ones(2)); stopval=1e-15, timelimit=3600,
+        maxiters=130, ftol_rel=0, ftol_abs=0, xtol_rel=0, xtol_abs=xtol_abs)
+      simplex, windingnumber, returncode, numiterations = neldermeadsol
+      @show windingnumber, returncode, numiterations
+      if (windingnumber == 1 && returncode == :XTOL_REACHED)# || returncode == :STOPVAL_REACHED
         c = deepcopy(config)
-        objective!(c, lb .+  (ub .- lb) .* nlsolution.zero)
-#        return c
+        minimiser = if windingnumber == 0
+          WindingNelderMead.position(WindingNelderMead.bestvertex(simplex))
+        else
+          WindingNelderMead.centre(simplex)
+        end
+        unitobjective!(c, minimiser)
         push!(solsvector, c)
+        if minimiser[2] > w0 / 10000
+          break
+        end
+#        return c
       end
+
+      #nlsolution = nlsolve(x->reim(boundedunitobjective!(x)),
+      #                     MArray((ic .- lb) ./ (ub .- lb)), xtol=1e-8, factor=0.01)
+      #if nlsolution.x_converged || nlsolution.f_converged
+      #  c = deepcopy(config)
+      #  objective!(c, lb .+  (ub .- lb) .* nlsolution.zero)
+#     #   return c
+      #  push!(solsvector, c)
+      #end
 
     end
 #    return nothing
@@ -412,6 +429,8 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   end
 
   function f2Dω!(config::Configuration, x::AbstractArray, plasma, cache)
+    @assert isfinite(x[1])
+    @assert isfinite(x[2])
     config.frequency = Complex(x[1], x[2])
     return det(tensor(plasma, config, cache))
   end
@@ -422,7 +441,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
 
   function findsolutions(plasma, coldplasma)
-    ngridpoints = 2^10
+    ngridpoints = 2^8
     kzs = range(-5.0, stop=5.0, length=ngridpoints) * k0
     k⊥s = range(0.0, stop=5.0, length=ngridpoints) * k0
 
@@ -712,7 +731,7 @@ function plotit(sols, file_extension=name_extension, fontsize=9)
 end
 
 if true#false#
-  @time plasmasols = findsolutions(Smms, Smmc)
+  @time plasmasols = findsolutions(Smmf, Smmc)
   plasmasols = selectlargeestgrowthrate(plasmasols)
   @show length(plasmasols)
   @time plotit(plasmasols)

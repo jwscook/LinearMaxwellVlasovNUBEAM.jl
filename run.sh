@@ -6,30 +6,36 @@
 # 184057 1.31 0.90 0.07
 # 184061 1.68 0.92 0.12
 
-#is=( 0.25 1.0 )
-#js=( 32 128 )
-is=( 0.0 0.0 0.0 0.0 0.0) #
-js=( 1   16  32  64  128) #
-ks=( 0   0   0   0   0  ) #
-for idx in "${!is[@]}"; do
-  tlh=${is[$idx]}
-  nrbs=${js[$idx]}
-  niters=${ks[$idx]}
-  nb_ne=0.12
-  echo "--tlh =" $tlh
-  echo "--nrbs =" $nrbs
-  echo "--nb_ne =" $nb_ne
-  julia -t 6 --proj src/ICE2D.jl --tlh $tlh --niters $niters --nrbs $nrbs\
-    --nubeamfilename fnb_184061H02_fi_1_scaled.h5\
-    --te 1680 --tp 920 --nb_ne 0.12 --ne 2.9e19 --np 2.37e19 --B0=1.29 --Zeff=1.38\
-    --otheralfvenspeed 4.8e6
-  #for nb_ne in 0.012 0.0012 0.00012
-  #do
-  #  echo "--nb_ne =" $nb_ne
-  #  julia -t 6 --proj src/ICE2D.jl --tlh 0.0 --niters 0 --nrbs $nrbs\
-  #    --nubeamfilename fnb_184061H02_fi_1_scaled.h5\
-  #    --te 1680 --tp 920 --nb_ne $nb_ne --ne 2.9e19 --np 2.37e19 --B0=1.29 --Zeff=1.38\
-  #    --otheralfvenspeed 4.8e6
-  #done
-done
 
+julia -t 2 --proj src/ICE2D.jl --tlh 0.01 --niters 1 --nrbs 1\
+  --nubeamfilename fnb_184061H02_fi_1_scaled.h5\
+  --te 1680 --tp 920 --nb_ne 0.12 --ne 2.9e19 --np 2.37e19 --B0=1.29 --Zeff=1.38\
+  --otheralfvenspeed 4.8e6
+
+#   #is=( 0.25 1.0 )
+#   #js=( 32 128 )
+#   is=( 0.0 0.0 0.0 0.0 0.0) #
+#   js=( 1   16  32  64  128) #
+#   ks=( 0   0   0   0   0  ) #
+#   for idx in "${!is[@]}"; do
+#     tlh=${is[$idx]}
+#     nrbs=${js[$idx]}
+#     niters=${ks[$idx]}
+#     nb_ne=0.12
+#     echo "--tlh =" $tlh
+#     echo "--nrbs =" $nrbs
+#     echo "--nb_ne =" $nb_ne
+#     julia -t 6 --proj src/ICE2D.jl --tlh $tlh --niters $niters --nrbs $nrbs\
+#       --nubeamfilename fnb_184061H02_fi_1_scaled.h5\
+#       --te 1680 --tp 920 --nb_ne 0.12 --ne 2.9e19 --np 2.37e19 --B0=1.29 --Zeff=1.38\
+#       --otheralfvenspeed 4.8e6
+#     #for nb_ne in 0.012 0.0012 0.00012
+#     #do
+#     #  echo "--nb_ne =" $nb_ne
+#     #  julia -t 6 --proj src/ICE2D.jl --tlh 0.0 --niters 0 --nrbs $nrbs\
+#     #    --nubeamfilename fnb_184061H02_fi_1_scaled.h5\
+#     #    --te 1680 --tp 920 --nb_ne $nb_ne --ne 2.9e19 --np 2.37e19 --B0=1.29 --Zeff=1.38\
+#     #    --otheralfvenspeed 4.8e6
+#     #done
+#   done
+#   
