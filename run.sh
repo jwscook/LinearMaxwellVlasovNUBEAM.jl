@@ -7,10 +7,10 @@
 # 184061 1.68 0.92 0.12
 
 
-julia -t 2 --proj src/ICE2D.jl --tlh 0.01 --niters 1 --nrbs 1\
+julia -t 1 --proj src/ICE2D.jl --tlh 0.01 --niters 1 --nrbs 1\
   --nubeamfilename fnb_184061H02_fi_1_scaled.h5\
-  --te 1680 --tp 920 --nb_ne 0.12 --ne 2.9e19 --np 2.37e19 --B0=1.29 --Zeff=1.38\
-  --otheralfvenspeed 4.8e6
+  --te 1680 --tp 920 --nb_ne 0.12 --ne 2.9e19 --np 2.37e19 --B0 1.29 --Zeff 1.38\
+  --otheralfvenspeed 4.8e6 --ngridpoints 32
 
 #   #is=( 0.25 1.0 )
 #   #js=( 32 128 )

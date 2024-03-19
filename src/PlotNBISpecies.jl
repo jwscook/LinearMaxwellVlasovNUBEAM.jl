@@ -40,7 +40,9 @@ vzs = collect(range(-smax, stop=smax, length=N))
 v⊥s = collect(range(0, stop=smax, length=N))
 
 z3 = zeros(N, N)
-for species in loaded[:nbi_species]
+allspecies = loaded[:nbi_species]
+allspecies = allspecies isa Vector ? allspecies : [allspecies]
+for species in allspecies
   ρ = NBI.density(species, 1836 * 2 * LinearMaxwellVlasov.mₑ)
   for (j, v⊥) in enumerate(v⊥s), (i, vz) in enumerate(vzs)
     z3[i, j] += species(vz, v⊥) * ρ

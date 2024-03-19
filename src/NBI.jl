@@ -593,15 +593,23 @@ end
 #  return output
 #end
 
+const NPARAMSCOUPLEFIT = 7
 function defaultcoupledfit(vz, v⊥, v0, param)
+#  v = sqrt(vz^2 + v⊥^2)
+#  p = vz / v
+#  #t = (atan(vz / v⊥) * 2/pi + 1) / 2
+#  output = param[1] * # height
+#    #exp(4v/v0/param[2]) * # slope up
+#    (v/v0)^(20param[2]) * # slope up
+#    exp(- (p - param[3])^2 / (0.5param[4])^2) * # pitch shape
+#    #exp(- (t - param[3])^2 / (0.1param[4])^2) * # pitch angle shape
+#    (0.5 + 0.5*erf((v0 * 2param[5] - v)/v0/0.1param[6])) # slope back down
   v = sqrt(vz^2 + v⊥^2)
-  p = vz / v
   t = (atan(vz / v⊥) * 2/pi + 1) / 2
   output = param[1] * # height
-    #exp(4v/v0/param[2]) * # slope up
-    (v/v0)^(20param[2]) * # slope up
-    exp(- (p - param[3])^2 / (0.5param[4])^2) * # pitch shape
-    (0.5 + 0.5*erf((v0 * 2param[5] - v)/v0/0.1param[6])) # slope back down
+    exp(-((v-3v0*param[2])/(0.4v0 * param[3]))^2) * # slope up
+    exp(- (t - param[4])^2 / (0.1param[5])^2) * # pitch angle shape
+    (0.5 + 0.5*erf((2v0 * param[6] - v)/v0/0.1param[7])) # slope back down
   return output
 end
 
@@ -612,7 +620,7 @@ function differentialevolutionfitcoupledspecies(
     timelimithours=1, targetfitness=0.01, traceinterval=600.0,
     performoptimisation=true,
     fitfvz⊥::F=defaultcoupledfit,
-    searchrange=[i == 3 ? (0.0, 1.0) : (0.0, 1.0) for i in 1:6]
+    searchrange=[i == 3 ? (0.0, 1.0) : (0.0, 1.0) for i in 1:NPARAMSCOUPLEFIT]
    ) where F
 
   cachehash = foldr(hash, (bboptimizemethod, fitfvz⊥);
@@ -653,6 +661,7 @@ function differentialevolutionfitcoupledspecies(
   end
 
   fnorm = norm(nbidata.fdata)
+  @show maximum(nbidata.fdata)
   @assert isfinite(fnorm)
 
   function objective(x)
@@ -662,11 +671,14 @@ function differentialevolutionfitcoupledspecies(
     A = objectivefit(x, nbidata)
     #@show norm(A), norm(A .- nbidata.fdata)
     maxA = maximum(A)
+    maxA = isfinite(maxA) ? maxA : 1.0
+    maxA = iszero(maxA) ? 1.0 : maxA
     @turbo for i in eachindex(A, nbidata.fdata)
       A[i] /= maxA
       A[i] -= nbidata.fdata[i]
     end
-    return norm(A) / fnorm
+    output = norm(A) / fnorm
+    return output
   end
 
   optctrl = bbsetup(objective;
@@ -677,7 +689,7 @@ function differentialevolutionfitcoupledspecies(
      TraceInterval = traceinterval)
 
   t = @elapsed res = if performoptimisation
-    bboptimize(optctrl;
+    bboptimize(optctrl, ones(length(searchrange)) ./ 2;
       TraceMode = :compact,
       MaxTime = 3600 * timelimithours,
       MaxSteps = 1_000_000,
@@ -693,7 +705,7 @@ function differentialevolutionfitcoupledspecies(
 
   performoptimisation && @info "Fitness achieved is $fitness in $(t / 3600) hours."
 
-  params = @MArray zeros(6) # make it type stable with this
+  params = @MArray zeros(length(searchrange)) # make it type stable with this
   params .= best_candidate(res)
   @show smax, params
   fvbest(vz, v⊥) = fitfvz⊥(vz, v⊥, smax, params)

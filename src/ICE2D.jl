@@ -84,6 +84,10 @@ argsettings = ArgParseSettings()
         help = "The Alfven speed if known from other sources"
         arg_type = Float64
         default = -1.0
+    "--ngridpoints"
+        help = "The number kz and k⊥ to use along one side of the 2D wavenumber grid"
+        arg_type = Int
+        default = 2^6
 end
 
 include("NBI.jl")
@@ -94,8 +98,9 @@ const parsedargs = parse_args(ARGS, argsettings)
 
 const nringbeams = parsedargs["nringbeams"]
 const injenergymultiplier = parsedargs["injenergymultiplier"]
-const vthfracinj = parsedargs["vthfracinj"]
+const _vthfracinj = parsedargs["vthfracinj"]
 
+const _ngridpoints = parsedargs["ngridpoints"]
 const name_extension = replace(filter(x -> !isspace(x), length(ARGS) > 0 ? "$(ARGS)" : "$(now())"),
                                "\"" => "")
 @show name_extension
@@ -186,7 +191,7 @@ const _nbi_ringbeamsfit = NBI.differentialevolutionfitspecies(nbidata, Πn, Ωn,
 const peakenergykev = NBI.energyofpeakkev(nbidata)
 const pitchofmax = NBI.pitchofpeak(nbidata)
 
-const nprocsadded = div(Sys.CPU_THREADS, 2)
+const nprocsadded = 20#div(Sys.CPU_THREADS, 2)
 addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
 @everywhere using ProgressMeter # for some reason must be up here on its own
@@ -209,7 +214,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   using LinearMaxwellVlasov, LinearAlgebra, WindingNelderMead
 
   injenergymultiplier = Float64(@fetchfrom 1 injenergymultiplier)
-  vthfracinj = Float64(@fetchfrom 1 vthfracinj)
+  vthfracinj = Float64(@fetchfrom 1 _vthfracinj)
 
   n0 = Float64(@fetchfrom 1 n0)
   nn = Float64(@fetchfrom 1 nn)
@@ -243,7 +248,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   mc = 12*mp # Carbon
 
   Va = sqrt(B0^2/LinearMaxwellVlasov.μ₀/(nd * md + np * mp + nn * mn + nc * mc))
-  @show otheralfvenspeed, Va / otheralfvenspeed
+  myid() == 2 && @show otheralfvenspeed, Va / otheralfvenspeed
 
   Ωe = cyclotronfrequency(B0, mₑ, -1)
   Ωd = cyclotronfrequency(B0, md, 1)
@@ -341,7 +346,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   end
 
   options = Options(memoiseparallel=false, memoiseperpendicular=true,
-    quadrature_rtol=1e-8, summation_rtol=1e-6)
+    quadrature_rtol=1e-6, summation_rtol=1e-7)
 
   function solve_given_ks(K, objective!, coldobjective!)
     ωfA0 = fastzerobetamagnetoacousticfrequency(Va, K, Ωd)
@@ -372,15 +377,17 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
     config = Configuration(K, options)
 
     ics = ((@SArray [ω0*1.0, grmax*0.9]),
-           (@SArray [ω0*0.9, grmax*0.8]),
+           #(@SArray [ω0*0.9, grmax*0.8]),
            (@SArray [ω0*0.8, grmax*0.5]),
-           (@SArray [ω0*0.7, grmax*0.2]),
+           #(@SArray [ω0*0.7, grmax*0.2]),
            (@SArray [ω0*1.1, grmax*0.8]),
-           (@SArray [ω0*0.95, grmax*0.4]),
+           #(@SArray [ω0*0.95, grmax*0.4]),
            (@SArray [ω0*0.95, grmax*0.2]),
-           (@SArray [ω0*0.95, grmax*0.1]))
+           #(@SArray [ω0*0.95, grmax*0.1]),
+          )
 
     function unitobjective!(c, x::T) where {T}
+        @show x
       @assert all(isfinite, x)
       output = objective!(c,
         T([x[i] * (ub[i] - lb[i]) + lb[i] for i in eachindex(x)]))
@@ -389,41 +396,62 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
     end
     unitobjectivex! = x -> unitobjective!(config, x)
     boundedunitobjective! = boundify(unitobjectivex!)
-    xtol_abs = w0 .* (@SArray [1e-4, 1e-5]) ./ (ub .- lb)
+    xtol_abs = w0 .* (@SArray [1e-3, 1e-3]) ./ (ub .- lb)
     solsvector = []
+        t = @elapsed begin
+          a = @allocated begin
+
     @elapsed for ic ∈ ics
       @assert all(i->lb[i] <= ic[i] <= ub[i], eachindex(ic))
-      neldermeadsol = WindingNelderMead.optimise(
-        boundedunitobjective!, SArray((ic .- lb) ./ (ub .- lb)),
-        1.0e-2 * (@SArray ones(2)); stopval=1e-15, timelimit=3600,
-        maxiters=130, ftol_rel=0, ftol_abs=0, xtol_rel=0, xtol_abs=xtol_abs)
-      simplex, windingnumber, returncode, numiterations = neldermeadsol
-      @show windingnumber, returncode, numiterations
-      if (windingnumber == 1 && returncode == :XTOL_REACHED)# || returncode == :STOPVAL_REACHED
-        c = deepcopy(config)
-        minimiser = if windingnumber == 0
-          WindingNelderMead.position(WindingNelderMead.bestvertex(simplex))
-        else
-          WindingNelderMead.centre(simplex)
-        end
-        unitobjective!(c, minimiser)
-        push!(solsvector, c)
-        if minimiser[2] > w0 / 10000
-          break
-        end
-#        return c
-      end
+    #  try
+            neldermeadsol = WindingNelderMead.optimise(
+              boundedunitobjective!, SArray((ic .- lb) ./ (ub .- lb)),
+              1.0e-2 * (@SArray ones(2)); stopval=1e-15, timelimit=120,
+              maxiters=130, ftol_rel=0, ftol_abs=0, xtol_rel=0, xtol_abs=xtol_abs)
+            simplex, windingnumber, returncode, numiterations = neldermeadsol
+
+    GC.safepoint()
+    GC.gc()
+    @show windingnumber, returncode
+            #@show windingnumber, returncode, numiterations
+            if (windingnumber == 1 && returncode == :XTOL_REACHED)# || returncode == :STOPVAL_REACHED
+              c = deepcopy(config)
+              minimiser = if windingnumber == 0
+                WindingNelderMead.position(WindingNelderMead.bestvertex(simplex))
+              else
+                WindingNelderMead.centre(simplex)
+              end
+              unitobjective!(c, minimiser)
+              push!(solsvector, c)
+              break
+              #return c
+              #if minimiser[2] > w0 / 10000
+              #end
+            end
+    #  catch err
+    #    @info err
+    #    @info " ... carrying on"
+    #  end
 
       #nlsolution = nlsolve(x->reim(boundedunitobjective!(x)),
-      #                     MArray((ic .- lb) ./ (ub .- lb)), xtol=1e-8, factor=0.01)
+      #                     MArray((ic .- lb) ./ (ub .- lb)), xtol=1e-4, factor=0.01)
       #if nlsolution.x_converged || nlsolution.f_converged
       #  c = deepcopy(config)
       #  objective!(c, lb .+  (ub .- lb) .* nlsolution.zero)
-#     #   return c
-      #  push!(solsvector, c)
+      #  return c
+      #  #push!(solsvector, c)
       #end
 
     end
+          end
+        end
+    if !isempty(solsvector)
+      c = solsvector[1]
+      k⊥ = LinearMaxwellVlasov.perp(c.wavenumber)
+      kz = LinearMaxwellVlasov.para(c.wavenumber)
+      @show k⊥, kz, t, a/2^20
+    end
+
 #    return nothing
     return solsvector
   end
@@ -439,27 +467,56 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
     return det(tensor(coldplasma, config, cache))
   end
 
+  NP = @fetchfrom 1 nprocsadded
+  function roundrobin(N, l=NP)
+    rows = [Int[] for _ in 1:l]
+    p = 1
+    for i in 1:N
+      push!(rows[p], i)
+      p = mod1(p+1, l)
+    end
+    vcat(rows...)
+  end
 
   function findsolutions(plasma, coldplasma)
-    ngridpoints = 2^8
+    ngridpoints = @fetchfrom 1 _ngridpoints
     kzs = range(-5.0, stop=5.0, length=ngridpoints) * k0
-    k⊥s = range(0.0, stop=5.0, length=ngridpoints) * k0
-
+    k⊥s = collect(1/2ngridpoints:1/ngridpoints:1-1/2ngridpoints) .* 5 .* k0
     # change order for better distributed scheduling
-    k⊥s = shuffle(vcat([k⊥s[i:nprocs():end] for i ∈ 1:nprocs()]...))
-    solutions = @sync @showprogress @distributed (vcat) for k⊥ ∈ k⊥s
-      cache = Cache()
-      objective! = @closure (C, x) -> f2Dω!(C, x, plasma, cache)
-      coldobjective! = @closure (C, x) -> f1Dω!(C, x, coldplasma, Cache())
-      innersolutions = Vector()
-      for (ikz, kz) ∈ enumerate(kzs)
+    #k⊥s = shuffle(vcat([k⊥s[i:nprocs():end] for i ∈ 1:nprocs()]...))
+#    k⊥s = k⊥s[roundrobin(length(k⊥s))]
+#    solutions = @sync @showprogress @distributed (vcat) for k⊥ ∈ k⊥s
+#      cache = Cache()
+#      objective! = @closure (C, x) -> f2Dω!(C, x, plasma, cache)
+#      coldobjective! = @closure (C, x) -> f1Dω!(C, x, coldplasma, Cache())
+#      innersolutions = Vector()
+#      for (ikz, kz) ∈ enumerate(kzs)
+#        K = Wavenumber(parallel=kz, perpendicular=k⊥)
+#        @time output = solve_given_ks(K, objective!, coldobjective!)
+#        isnothing(output) && continue
+#        push!(innersolutions, output...)
+#      end
+#      innersolutions
+#    end
+
+    kzk⊥s = collect(Iterators.product(kzs, k⊥s))
+    kzk⊥s = reverse(kzk⊥s[roundrobin(length(kzk⊥s))])
+    objective! = @closure (C, x) -> f2Dω!(C, x, plasma, Cache())
+    coldobjective! = @closure (C, x) -> f1Dω!(C, x, coldplasma, Cache())
+    solutions = @sync @showprogress @distributed (vcat) for kzk⊥ ∈ kzk⊥s
+      kz, k⊥ = kzk⊥
+      @show kz, k⊥
+      #inner = try
         K = Wavenumber(parallel=kz, perpendicular=k⊥)
         output = solve_given_ks(K, objective!, coldobjective!)
-        isnothing(output) && continue
-        push!(innersolutions, output...)
-      end
-      innersolutions
+        #isnothing(output) && continue
+        (typeof(output) <: Vector) ? output : [output]
+      # catch
+      #     []
+      # end
+     #inner
     end
+    solutions = filter(!isnothing, solutions)
     return solutions
   end
 end #@everywhere
