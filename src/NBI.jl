@@ -420,6 +420,7 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   M0 = zeros(Float64, size(nbidata))
 
   function reducematrices!(M0, M)
+    @assert size(M, 3) == Threads.nthreads()
     @inbounds @turbo for i in eachindex(M0)
       M0[i] = 0
     end
@@ -433,6 +434,7 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   function objectivefit(x, nbidata::NBIDataEnergyPitch)
     @assert size(M, 1) == length(nbidata.pdata) == length(nbi.sqrt1_p²data)
     @assert size(M, 2) == length(nbidata.edata)
+    @assert size(M, 3) == Threads.nthreads()
     @threads for k in 1:nringbeams
       s = speciesscalar(k, x, nbidata)
       ρ = density(s, mass)
@@ -454,6 +456,7 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   function objectivefit(x, nbidata::NBIDataVparaVperp)
     @assert size(M, 1) == length(nbidata.vparadata)
     @assert size(M, 2) == length(nbidata.vperpdata)
+    @assert size(M, 3) == Threads.nthreads()
     @threads for k in 1:nringbeams
       s = speciesscalar(k, x, nbidata)
       ρ = density(s, mass)
@@ -490,6 +493,7 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   function objective(x)
     @assert minimum(x) >= 0
     @assert maximum(x) <= 1
+
     A = objectivefit(x, nbidata)
     rescalebyjacobians!(A, nbidata)
     maxA = maximum(A)
