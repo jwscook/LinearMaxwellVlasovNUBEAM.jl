@@ -6,11 +6,30 @@
 # 184057 1.31 0.90 0.07
 # 184061 1.68 0.92 0.12
 
-#is=( 0.25 1.0 )
-#js=( 32 128 )
-is=( 0.0 0.0 0.0 0.0 0.0) #
-js=( 1   16  32  64  128) #
-ks=( 0   0   0   0   0  ) #
+#julia -t 6 --proj src/ICE2D.jl --tlh 0.1 --niters 1 --nrbs 1\
+#    --nubeamfilename fnb_184061H02_fi_1_scaled.h5\
+#    --te 1680 --tp 920 --nb_ne 0.12 --ne 2.9e19 --np 2.37e19 --B0=1.29 --Zeff=1.38\
+#    --otheralfvenspeed 4.8e6
+
+#for vthfracinj in 0.0 0.0001 0.001 0.01 0.02 0.04 0.06 0.08 0.1; do
+#  julia -t 6 --proj src/ICE2D.jl --tlh 0.1 --niters 1 --nrbs 1\
+#      --nubeamfilename fnb_184061H02_fi_1_scaled.h5\
+#      --te 1680 --tp 920 --nb_ne 0.12 --ne 2.9e19 --np 2.37e19 --B0=1.29 --Zeff=1.38\
+#      --otheralfvenspeed 4.8e6 --vthfracinj $vthfracinj
+#  mkdir -p primary_vthfracinj$vthfracinj
+#  rm primary_vthfracinj$vthfracinj/*.pdf
+#  rm primary_vthfracinj$vthfracinj/*.jld
+#  mv *vthfracinj,$vthfracinj* primary_vthfracinj$vthfracinj
+#  mv *vthfracinj,$vthfracinj* primary_vthfracinj$vthfracinj
+#done
+
+
+#
+##is=( 0.25 1.0 )
+##js=( 32 128 )
+is=( 0.5) # 1.0 0.0 0.0 0.0
+js=( 64 ) # 64  1   16  32
+ks=( 4  ) # 4   0   0   0
 for idx in "${!is[@]}"; do
   tlh=${is[$idx]}
   nrbs=${js[$idx]}
@@ -19,7 +38,7 @@ for idx in "${!is[@]}"; do
   echo "--tlh =" $tlh
   echo "--nrbs =" $nrbs
   echo "--nb_ne =" $nb_ne
-  julia -t 6 --proj src/ICE2D.jl --tlh $tlh --niters $niters --nrbs $nrbs\
+  julia -t 8 --proj src/ICE2D.jl --tlh $tlh --niters $niters --nrbs $nrbs\
     --nubeamfilename fnb_184061H02_fi_1_scaled.h5\
     --te 1680 --tp 920 --nb_ne 0.12 --ne 2.9e19 --np 2.37e19 --B0=1.29 --Zeff=1.38\
     --otheralfvenspeed 4.8e6
@@ -32,4 +51,4 @@ for idx in "${!is[@]}"; do
   #    --otheralfvenspeed 4.8e6
   #done
 done
-
+#

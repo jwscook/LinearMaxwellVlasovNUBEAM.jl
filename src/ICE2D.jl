@@ -1,8 +1,9 @@
 using Distributed, Dates, ArgParse, HDF5
 using Plots, Random, ImageFiltering, Statistics
 using Dierckx, Contour, JLD2, DelimitedFiles, JLSO
-using Pkg
-Pkg.update("Plots")
+#using Pkg
+#
+#Pkg.update("Plots")
 
 println("Starting at ", now())
 
@@ -163,6 +164,7 @@ const Πn = plasmafrequency(nn, mn, 1)
 #@info "Creating nbi coupled species"
 #const _nbi_coupled = NBI.couplednbispecies(nbi_interp, Πn, Ωn)
 
+@show Threads.nthreads()#div(Sys.CPU_THREADS, 2)
 const initialguessfilepath = parsedargs["initialguessfilepath"]
 @info "Calculating nbi fit species with $nringbeams sub-populations"
 for _ in 1:niters # iterate and saves result after each
@@ -181,7 +183,7 @@ const _nbi_ringbeamsfit = NBI.differentialevolutionfitspecies(nbidata, Πn, Ωn,
 const peakenergykev = NBI.energyofpeakkev(nbidata)
 const pitchofmax = NBI.pitchofpeak(nbidata)
 
-const nprocsadded = 6#Threads.nthreads()#div(Sys.CPU_THREADS, 2)
+const nprocsadded = Threads.nthreads()#div(Sys.CPU_THREADS, 2)
 addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
 @everywhere using ProgressMeter # for some reason must be up here on its own
@@ -272,9 +274,6 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   carbon_cold = ColdSpecies(Πc, Ωc) # to make Zeff
 
   nbi_cold = ColdSpecies(Πn, Ωn)
-  nbi_ringbeam = SeparableVelocitySpecies(Πn, Ωn,
-    FBeam(vinj * vthfracinj, vinj * peakpitch),
-    FRing(vinj * vthfracinj, vinj * sqrt(1-peakpitch^2)))
 
 #  pth = 0.1
 #  pinj = 0.7 # TODO make this configurable
@@ -302,16 +301,25 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   nn_calculated = sum(s->s.Π^2 / q₀^2 * mn * LinearMaxwellVlasov.ϵ₀ , nbi_ringbeamsfit)
   @info "Beam density is $nn_calculated, and should be $nn"
 
+  fit1 = nbi_ringbeamsfit[1]
+  nbi_ringbeamdelta = SeparableVelocitySpecies(fit1.Π, fit1.Ω,
+                                          FParallelDiracDelta(fit1.Fz.vd),
+                                          FPerpendicularDiracDelta(fit1.F⊥.vd))
 
-#  fit1 = nbi_ringbeamsfit[1]
-#  nbi_ringbeamdelta = SeparableVelocitySpecies(fit1.Π, fit1.Ω,
-#                                          FParallelDiracDelta(fit1.Fz.vd),
-#                                          FPerpendicularDiracDelta(fit1.F⊥.vd))
+  nbi_ringbeam = if iszero(vthfracinj)
+    SeparableVelocitySpecies(Πn, Ωn,
+      FParallelDiracDelta(vinj * peakpitch),
+      FPerpendicularDiracDelta(vinj * sqrt(1-peakpitch^2)))
+  else
+    SeparableVelocitySpecies(Πn, Ωn,
+      FBeam(vinj * vthfracinj, vinj * peakpitch),
+      FRing(vinj * vthfracinj, vinj * sqrt(1-peakpitch^2)))
+  end
 
   Smms = Plasma([commonspecies..., nbi_ringbeamsfit...])
 #  Smms = Plasma([commonspecies..., nbi_ringbeamdelta])
   Smmc = Plasma([commonspecies..., nbi_cold])
-# Smmr = Plasma([commonspecies..., nbi_ringbeam])
+#  Smms = Plasma([commonspecies..., nbi_ringbeam])
 # Smmo = Plasma([commonspecies..., nbi_coupled])
 # Smmt = Plasma([commonspecies..., nbi_tanh])
   @assert LinearMaxwellVlasov.isneutral(Smmc)
@@ -320,7 +328,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
   w0 = abs(Ωd)
   k0 = w0 / abs(Va)
 
-  grmax = abs(Ωn) * 0.02
+  grmax = abs(Ωn) * 0.03
   grmin = -grmax * 2/3
   function bounds(ω0)
     lb = @SArray [max(0.0, min(ω0 - Ωd/2, ω0 * 0.6)), grmin]
@@ -376,35 +384,35 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
     end
     unitobjectivex! = x -> unitobjective!(config, x)
     boundedunitobjective! = boundify(unitobjectivex!)
-    xtol_abs = w0 .* (@SArray [1e-4, 1e-5]) ./ (ub .- lb)
+    xtol_abs = w0 .* (@SArray [1e-5, 1e-6]) ./ (ub .- lb)
     solsvector = []
     @elapsed for ic ∈ ics
       @assert all(i->lb[i] <= ic[i] <= ub[i], eachindex(ic))
-      #neldermeadsol = WindingNelderMead.optimise(
-      #  boundedunitobjective!, SArray((ic .- lb) ./ (ub .- lb)),
-      #  1.0e-2 * (@SArray ones(2)); stopval=1e-15, timelimit=3600,
-      #  maxiters=150, ftol_rel=0, ftol_abs=0, xtol_rel=0, xtol_abs=xtol_abs)
-      #simplex, windingnumber, returncode, numiterations = neldermeadsol
-      #if (windingnumber == 1 && returncode == :XTOL_REACHED)# || returncode == :STOPVAL_REACHED
-      #  c = deepcopy(config)
-      #  minimiser = if windingnumber == 0
-      #    WindingNelderMead.position(WindingNelderMead.bestvertex(simplex))
-      #  else
-      #    WindingNelderMead.centre(simplex)
-      #  end
-      #  unitobjective!(c, minimiser)
-      #  push!(solsvector, c)
-#     #   return c
-      #end
-
-      nlsolution = nlsolve(x->reim(boundedunitobjective!(x)),
-                           MArray((ic .- lb) ./ (ub .- lb)), xtol=1e-8, factor=0.01)
-      if nlsolution.x_converged || nlsolution.f_converged
+      neldermeadsol = WindingNelderMead.optimise(
+        boundedunitobjective!, SArray((ic .- lb) ./ (ub .- lb)),
+        1.0e-2 * (@SArray ones(2)); stopval=1e-15, timelimit=3600,
+        maxiters=150, ftol_rel=0, ftol_abs=0, xtol_rel=0, xtol_abs=xtol_abs)
+      simplex, windingnumber, returncode, numiterations = neldermeadsol
+      if (windingnumber == 1 && returncode == :XTOL_REACHED)# || returncode == :STOPVAL_REACHED
         c = deepcopy(config)
-        objective!(c, lb .+  (ub .- lb) .* nlsolution.zero)
-#        return c
+        minimiser = if windingnumber == 0
+          WindingNelderMead.position(WindingNelderMead.bestvertex(simplex))
+        else
+          WindingNelderMead.centre(simplex)
+        end
+        unitobjective!(c, minimiser)
         push!(solsvector, c)
+#        return c
       end
+
+#      nlsolution = nlsolve(x->reim(boundedunitobjective!(x)),
+#                           MArray((ic .- lb) ./ (ub .- lb)), xtol=1e-8, factor=0.01)
+#      if nlsolution.x_converged || nlsolution.f_converged
+#        c = deepcopy(config)
+#        objective!(c, lb .+  (ub .- lb) .* nlsolution.zero)
+##        return c
+#        push!(solsvector, c)
+#      end
 
     end
 #    return nothing
@@ -422,9 +430,9 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
 
   function findsolutions(plasma, coldplasma)
-    ngridpoints = 2^10
+    ngridpoints = 2^9
     kzs = range(-5.0, stop=5.0, length=ngridpoints) * k0
-    k⊥s = range(0.0, stop=5.0, length=ngridpoints) * k0
+    k⊥s = (1/ngridpoints/2:1/ngridpoints:1-1/ngridpoints/2) .* 5k0
 
     # change order for better distributed scheduling
     k⊥s = shuffle(vcat([k⊥s[i:nprocs():end] for i ∈ 1:nprocs()]...))

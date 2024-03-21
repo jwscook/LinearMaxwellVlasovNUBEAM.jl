@@ -367,7 +367,7 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   @info "Generating differential evolution species."
 
   smax = maxspeed(nbidata)
-  maxvth = smax / 4
+  maxvth = smax / 3
 
   pmin = pitchmin(nbidata)
   plen = pitchrange(nbidata)
@@ -420,7 +420,6 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   M0 = zeros(Float64, size(nbidata))
 
   function reducematrices!(M0, M)
-    @assert size(M, 3) == Threads.nthreads()
     @inbounds @turbo for i in eachindex(M0)
       M0[i] = 0
     end
@@ -434,7 +433,6 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   function objectivefit(x, nbidata::NBIDataEnergyPitch)
     @assert size(M, 1) == length(nbidata.pdata) == length(nbi.sqrt1_p²data)
     @assert size(M, 2) == length(nbidata.edata)
-    @assert size(M, 3) == Threads.nthreads()
     @threads for k in 1:nringbeams
       s = speciesscalar(k, x, nbidata)
       ρ = density(s, mass)
@@ -456,7 +454,6 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   function objectivefit(x, nbidata::NBIDataVparaVperp)
     @assert size(M, 1) == length(nbidata.vparadata)
     @assert size(M, 2) == length(nbidata.vperpdata)
-    @assert size(M, 3) == Threads.nthreads()
     @threads for k in 1:nringbeams
       s = speciesscalar(k, x, nbidata)
       ρ = density(s, mass)
@@ -493,7 +490,6 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
   function objective(x)
     @assert minimum(x) >= 0
     @assert maximum(x) <= 1
-
     A = objectivefit(x, nbidata)
     rescalebyjacobians!(A, nbidata)
     maxA = maximum(A)
@@ -513,6 +509,13 @@ function differentialevolutionfitspecies(nbidata::AbstractNBIData, Π, Ω, numbe
       loaded = JLSO.load(initialguessfilepath)
       initialguessres = loaded[:results]
       best_candidate(initialguessres)
+    else
+      ig = rand(ncomponents_per_ringbeam * nringbeams)
+      ig[2:5:end] .*= 0.2
+      ig[2:5:end] .+= 0.6
+      ig[3:5:end] .*= 0.2
+      ig[3:5:end] .+= 0.6
+      ig
     end
     bboptimize(optctrl, initialguess;
       TraceMode = :compact,
