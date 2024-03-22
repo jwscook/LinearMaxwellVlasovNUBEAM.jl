@@ -345,7 +345,7 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
     return (lb, ub)
   end
 
-  options = Options(memoiseparallel=false, memoiseperpendicular=true,
+  options = Options(memoiseparallel=false, memoiseperpendicular=false,
     quadrature_rtol=1e-6, summation_rtol=1e-7)
 
   function solve_given_ks(K, objective!, coldobjective!)
@@ -387,10 +387,12 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
           )
 
     function unitobjective!(c, x::T) where {T}
-        @show x
       @assert all(isfinite, x)
-      output = objective!(c,
-        T([x[i] * (ub[i] - lb[i]) + lb[i] for i in eachindex(x)]))
+      y =  T([x[i] * (ub[i] - lb[i]) + lb[i] for i in eachindex(x)])
+      if iszero(y[2])
+        @show c, x, y
+      end
+      output = objective!(c, y)
       #@show x, output
       return output
     end
@@ -480,8 +482,14 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
 
   function findsolutions(plasma, coldplasma)
     ngridpoints = @fetchfrom 1 _ngridpoints
-    kzs = range(-5.0, stop=5.0, length=ngridpoints) * k0
-    k⊥s = collect(1/2ngridpoints:1/ngridpoints:1-1/2ngridpoints) .* 5 .* k0
+    kl = 1.0
+    kzs = range(-kl, stop=kl, length=ngridpoints) * k0
+    k⊥s = collect(1/2ngridpoints:1/ngridpoints:1-1/2ngridpoints) .* kl .* k0
+
+    #k⊥s, kzs = ([11.051831959358669], [-10.371220607022797])
+#    (k⊥, kz, t, a / 2 ^ 20) = (11.051831959358669, -10.371220607022797, 1747.922114811, 450430.12883758545)
+
+    
     # change order for better distributed scheduling
     #k⊥s = shuffle(vcat([k⊥s[i:nprocs():end] for i ∈ 1:nprocs()]...))
 #    k⊥s = k⊥s[roundrobin(length(k⊥s))]
@@ -506,15 +514,15 @@ addprocs(nprocsadded, exeflags=["--project", "-t 1"])
     solutions = @sync @showprogress @distributed (vcat) for kzk⊥ ∈ kzk⊥s
       kz, k⊥ = kzk⊥
       @show kz, k⊥
-      #inner = try
+      inner = try
         K = Wavenumber(parallel=kz, perpendicular=k⊥)
         output = solve_given_ks(K, objective!, coldobjective!)
         #isnothing(output) && continue
         (typeof(output) <: Vector) ? output : [output]
-      # catch
-      #     []
-      # end
-     #inner
+      catch
+        []
+      end
+      inner
     end
     solutions = filter(!isnothing, solutions)
     return solutions
