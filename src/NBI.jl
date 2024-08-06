@@ -177,8 +177,8 @@ function NBIDataVparaVperp(fname, massnumber=2; cutoffbelowvpara=-Inf, cutoffwid
   fnb ./= fmax
   @assert all(isfinite, fnb)
 
-  speedofpeak = sqrt(vparadata[ind[2]]^2 + vperpdata[ind[1]]^2)
-  pitchofpeak = vparadata[ind[2]] / speedofpeak
+  speedofpeak = sqrt(vparadata[ind[1]]^2 + vperpdata[ind[2]]^2)
+  pitchofpeak = vparadata[ind[1]] / speedofpeak
   energyofpeakkeV = 0.5 * 1836mₑ * massnumber * speedofpeak^2 / 1000q₀
 
   @assert issorted(vparadata)
